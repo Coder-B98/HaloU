@@ -138,6 +138,20 @@ struct tag_validate_file_range
 unsigned char tag_validate_custom_edition_tags(void *tag_header, long loaded_size, unsigned long tag_cache_size,
 	struct tag_validate_file_range const *file_ranges, short file_range_count, char const *map_name);
 
+/* a big-endian build (the Wii U's byte order, tools/ppc_map_validate.py)
+turns the map's bytes around as they are read, as the game will
+(port/linux/game/tag_byte_swap.c) */
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define MAP_VALIDATE_BIG_ENDIAN 1
+void tag_byte_swap_cache_file_header(void *header);
+unsigned char tag_byte_swap_tags(void *tag_header, long tag_data_size, long relocation);
+unsigned char tag_byte_swap_structure_bsp(void *base, long size, long relocation);
+long tag_byte_swap_unswapped_tags(void);
+long tag_byte_swap_unswapped_data(void);
+#else
+#define MAP_VALIDATE_BIG_ENDIAN 0
+#endif
+
 static int quiet;
 /* (fuzzing: each bsp is checked twice, and whether a second check of one
 found more to correct) */
@@ -211,6 +225,7 @@ static unsigned char *map_read(char const *path, struct cache_file_header *heade
 		return NULL;
 	if (fseek(file, 0, SEEK_END) || (size = ftell(file)) < CACHE_FILE_HEADER_SIZE || fseek(file, 0, SEEK_SET) ||
 		fread(header, CACHE_FILE_HEADER_SIZE, 1, file) != 1 ||
+		(MAP_VALIDATE_BIG_ENDIAN && (tag_byte_swap_cache_file_header(header), 0)) ||
 		header->header_signature != CACHE_FILE_HEADER_SIGNATURE ||
 		header->footer_signature != CACHE_FILE_FOOTER_SIGNATURE ||
 		header->file_length < CACHE_FILE_HEADER_SIZE)
@@ -265,6 +280,13 @@ static int map_check(struct cache_file_header const *header, unsigned char const
 	*corrections = 0;
 	memset(tag_cache, 0xCD, TAG_CACHE_SIZE);
 	memcpy(tag_cache, bytes + header->tag_data_offset, header->tag_data_size);
+#if MAP_VALIDATE_BIG_ENDIAN
+	if (!tag_byte_swap_tags(tag_cache, header->tag_data_size, 0))
+	{
+		printf("%s: its tags cannot be turned around\n", name);
+		return 1;
+	}
+#endif
 	if (!tag_validate_tags(tag_cache, header->tag_data_size, header->file_length, name))
 		return 1;
 	*corrections = tag_validate_corrections();
@@ -311,6 +333,14 @@ static int map_check(struct cache_file_header const *header, unsigned char const
 		}
 		memset(tag_cache + header->tag_data_size, 0xCD, TAG_CACHE_SIZE - header->tag_data_size);
 		memcpy(reference->base_address, bytes + reference->file_offset, reference->file_size);
+#if MAP_VALIDATE_BIG_ENDIAN
+		if (!tag_byte_swap_structure_bsp(reference->base_address, reference->file_size, 0))
+		{
+			printf("%s: its structure bsp %ld cannot be turned around\n", name, index);
+			refused = 1;
+			break;
+		}
+#endif
 		if (!tag_validate_structure_bsp(reference->tag_index, reference->base_address, reference->file_size))
 		{
 			refused = 1;
@@ -963,7 +993,9 @@ int main(int argc, char **argv)
 	}
 	custom_edition_tag_cache = mmap((void *)CUSTOM_EDITION_TAG_CACHE_ADDRESS, CUSTOM_EDITION_TAG_CACHE_BYTES,
 		PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
-	if (custom_edition_tag_cache != (unsigned char *)CUSTOM_EDITION_TAG_CACHE_ADDRESS)
+	/* (a big-endian build checks Xbox maps only: under qemu-ppc that address
+	may be the emulator's) */
+	if (custom_edition_tag_cache != (unsigned char *)CUSTOM_EDITION_TAG_CACHE_ADDRESS && !MAP_VALIDATE_BIG_ENDIAN)
 	{
 		fprintf(stderr, "map_validate: the Custom Edition tag cache's address (%08lx) is taken\n",
 			(unsigned long)CUSTOM_EDITION_TAG_CACHE_ADDRESS);
@@ -1015,6 +1047,11 @@ int main(int argc, char **argv)
 				printf("%s: a resource map, passed over\n", argv[argument]);
 			continue;
 		case _cache_file_format_custom_edition_cache:
+			if (MAP_VALIDATE_BIG_ENDIAN)
+			{
+				printf("%s: a Custom Edition map, which a big-endian build does not check yet\n", argv[argument]);
+				continue;
+			}
 			if (custom_edition_validate(argv[argument], custom_edition_tag_cache, &corrections, seed, fuzz_iterations))
 			{
 				if (!fuzz_iterations)
@@ -1050,6 +1087,10 @@ int main(int argc, char **argv)
 			if (strict && corrections)
 				failed = 1;
 		}
+#if MAP_VALIDATE_BIG_ENDIAN
+		printf("%s: so far %ld tags without a schema and %ld tag data fields left as read\n", argv[argument],
+			tag_byte_swap_unswapped_tags(), tag_byte_swap_unswapped_data());
+#endif
 		fflush(stdout);
 	}
 

@@ -123,7 +123,7 @@ otherwise) */
 /* a definition: its name, its structure and its fields, which end with
 TAG_SCHEMA_END */
 #define TAG_SCHEMA_DEFINITION(name, type, fields) \
-	{ #name, sizeof(type), (fields) }
+	{ #name, sizeof(type), (fields), #type }
 
 #define TAG_SCHEMA_BLOCK(type, field, definition, maximum) \
 	{ _tag_schema_block, sizeof(struct tag_block), 1, 0, \
@@ -245,6 +245,9 @@ struct tag_schema_definition
 	char const *name;
 	long size;
 	struct tag_schema_field const *fields;
+	/* the structure's C type, as written (tag_byte_swap.c finds where its
+	integers are by it: tag_swap_codes.c) */
+	char const *type_name;
 };
 
 struct tag_schema_group

@@ -25,7 +25,11 @@ from ppc_compile_check import ppc_command  # noqa: E402
 
 OUTPUT = Path("port/linux/game/tag_swap_codes.c")
 SCHEMA_SOURCES = sorted(Path("port/linux/game").glob("tag_schema_*.c"))
-DEFINITION = re.compile(r"TAG_SCHEMA_DEFINITION\(\s*\w+\s*,\s*([^,]+?)\s*,")
+# an expanded TAG_SCHEMA_DEFINITION, { "name", sizeof(type), (fields), "type" },
+# or a definition written out for part of a structure, { "name",
+# offsetof(type, field), fields, "type" }
+DEFINITION = re.compile(r'\{\s*"\w+"\s*,\s*(?:sizeof|__builtin_offsetof)\s*\([^)]*\)\s*,\s*\(?\s*\w+\s*\)?\s*,'
+                        r'\s*"([^"]+)"\s*\}')
 
 K = ci.TypeKind
 SCALARS = {
@@ -96,12 +100,25 @@ class Layout:
             self.problems.append(f"union {where}")
 
 
-def parse(source):
+def unit_args(source):
+    # the unit's compile, for big-endian PowerPC (ppc_compile_check.py)
     commands = subprocess.run(["ninja", "-t", "commands", "linux"], check=True, capture_output=True,
                               text=True).stdout.splitlines()
     command = next(c for c in commands if f" -c {source} " in c)
     args = ppc_command(command, Path("/dev/null"))[1:]
-    args = [a for a in args if a not in ("-c", str(source))][:-2]
+    return [a for a in args if a not in ("-c", str(source))][:-2]
+
+
+def schema_types(source, args):
+    # the types the unit's schemas name: TAG_SCHEMA_DEFINITION's #type, as
+    # the preprocessor writes it (so that definitions made by other macros
+    # are found too)
+    text = subprocess.run(["clang", "-E", "-P", *args, str(source)], check=True, capture_output=True,
+                          text=True).stdout
+    return set(DEFINITION.findall(text))
+
+
+def parse(source, args):
     resource = subprocess.run(["clang", "-print-resource-dir"], check=True, capture_output=True,
                               text=True).stdout.strip()
     tu = ci.Index.create().parse(str(source), args=args + ["-resource-dir", resource])
@@ -111,25 +128,14 @@ def parse(source):
     return tu
 
 
-def find_type(tu, spelling):
-    # the type a schema names, from a variable declared of it in the unit
-    for cursor in tu.cursor.walk_preorder():
-        if cursor.kind in (ci.CursorKind.STRUCT_DECL, ci.CursorKind.TYPEDEF_DECL) and \
-                cursor.type.get_canonical().get_size() > 0:
-            if cursor.type.spelling == spelling or \
-                    (cursor.kind == ci.CursorKind.STRUCT_DECL and f"struct {cursor.spelling}" == spelling) or \
-                    (cursor.kind == ci.CursorKind.TYPEDEF_DECL and cursor.spelling == spelling):
-                return cursor.type
-    return None
-
-
 def generate():
     types = {}
     for source in SCHEMA_SOURCES:
-        spellings = {" ".join(s.split()) for s in DEFINITION.findall(source.read_text())}
+        args = unit_args(source)
+        spellings = schema_types(source, args)
         if not spellings:
             continue
-        tu = parse(source)
+        tu = parse(source, args)
         lookup = {}
         for cursor in tu.cursor.walk_preorder():
             if cursor.kind == ci.CursorKind.STRUCT_DECL and cursor.is_definition():

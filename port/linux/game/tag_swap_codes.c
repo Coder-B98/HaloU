@@ -18,6 +18,7 @@ static struct tag_swap_run const real_point2d_runs[] = {{0, 4, 2}};
 static struct tag_swap_run const real_point3d_runs[] = {{0, 4, 3}};
 static struct tag_swap_run const real_vector4d_runs[] = {{0, 4, 4}};
 static struct tag_swap_run const struct__biped_definition_runs[] = {{0, 4, 7}, {28, 2, 4}, {36, 4, 116}, {500, 2, 2}, {504, 4, 3}};
+static struct tag_swap_run const struct__control_definition_runs[] = {{0, 2, 2}, {4, 4, 1}, {88, 4, 12}};
 static struct tag_swap_run const struct__device_definition_runs[] = {{0, 4, 7}, {28, 2, 4}, {36, 4, 60}};
 static struct tag_swap_run const struct__equipment_definition_runs[] = {{0, 2, 2}, {4, 4, 5}};
 static struct tag_swap_run const struct__item_definition_runs[] = {{0, 4, 1}, {4, 2, 2}, {8, 4, 1}, {12, 2, 2}, {16, 4, 4}, {32, 2, 4}, {40, 4, 89}};
@@ -77,6 +78,7 @@ static struct tag_swap_run const struct_color_table_definition_runs[] = {{0, 4, 
 static struct tag_swap_run const struct_continuous_damage_effect_definition_runs[] = {{0, 4, 22}, {88, 2, 2}, {92, 4, 50}, {292, 2, 2}, {296, 4, 54}};
 static struct tag_swap_run const struct_contrail_definition_runs[] = {{0, 2, 2}, {4, 4, 5}, {24, 2, 2}, {28, 4, 9}, {64, 2, 2}, {68, 4, 16}, {132, 2, 2}, {136, 4, 7}, {164, 2, 4}, {176, 2, 1}, {312, 4, 3}};
 static struct tag_swap_run const struct_contrail_point_state_runs[] = {{0, 4, 26}};
+static struct tag_swap_run const struct_control_definition_runs[] = {{0, 2, 2}, {4, 4, 65}, {264, 2, 4}, {272, 4, 11}, {316, 2, 2}, {320, 4, 22}, {408, 2, 4}, {416, 4, 60}, {656, 2, 2}, {660, 4, 1}, {744, 4, 12}};
 static struct tag_swap_run const struct_control_placement_runs[] = {{0, 2, 4}, {8, 4, 6}, {32, 2, 2}, {36, 4, 1}, {40, 2, 2}, {44, 4, 1}, {48, 2, 3}};
 static struct tag_swap_run const struct_damage_definition_runs[] = {{0, 2, 2}, {4, 4, 54}};
 static struct tag_swap_run const struct_damage_effect_definition_runs[] = {{0, 4, 9}, {36, 2, 2}, {40, 4, 4}, {56, 2, 2}, {60, 4, 10}, {100, 2, 2}, {104, 4, 4}, {120, 2, 2}, {124, 4, 8}, {156, 2, 2}, {160, 4, 12}, {208, 2, 2}, {212, 4, 5}, {232, 2, 2}, {236, 4, 54}, {452, 2, 2}, {456, 4, 54}};
@@ -224,6 +226,7 @@ static struct tag_swap_run const struct_scenario_device_group_runs[] = {{32, 4, 
 static struct tag_swap_run const struct_scenario_netgame_equipment_runs[] = {{0, 4, 1}, {4, 2, 6}, {16, 4, 32}};
 static struct tag_swap_run const struct_scenario_netgame_flag_runs[] = {{0, 4, 4}, {16, 2, 2}, {20, 4, 32}};
 static struct tag_swap_run const struct_scenario_object_name_runs[] = {{32, 2, 2}};
+static struct tag_swap_run const struct_scenario_object_palette_entry_runs[] = {{0, 4, 12}};
 static struct tag_swap_run const struct_scenario_starting_equipment_runs[] = {{0, 4, 1}, {4, 2, 4}, {12, 4, 48}};
 static struct tag_swap_run const struct_scenario_starting_profile_runs[] = {{32, 4, 6}, {56, 2, 2}, {60, 4, 4}, {76, 2, 2}};
 static struct tag_swap_run const struct_scenario_structure_bsp_reference_runs[] = {{0, 4, 3}, {16, 4, 4}};
@@ -342,6 +345,7 @@ struct tag_swap_type const tag_swap_types[] =
 	{"real_point3d", 12, 1, real_point3d_runs},
 	{"real_vector4d", 16, 1, real_vector4d_runs},
 	{"struct _biped_definition", 516, 5, struct__biped_definition_runs},
+	{"struct _control_definition", 148, 3, struct__control_definition_runs},
 	{"struct _device_definition", 276, 3, struct__device_definition_runs},
 	{"struct _equipment_definition", 24, 2, struct__equipment_definition_runs},
 	{"struct _item_definition", 396, 7, struct__item_definition_runs},
@@ -401,6 +405,7 @@ struct tag_swap_type const tag_swap_types[] =
 	{"struct continuous_damage_effect_definition", 512, 5, struct_continuous_damage_effect_definition_runs},
 	{"struct contrail_definition", 324, 11, struct_contrail_definition_runs},
 	{"struct contrail_point_state", 104, 1, struct_contrail_point_state_runs},
+	{"struct control_definition", 804, 11, struct_control_definition_runs},
 	{"struct control_placement", 64, 7, struct_control_placement_runs},
 	{"struct damage_definition", 220, 2, struct_damage_definition_runs},
 	{"struct damage_effect_definition", 672, 17, struct_damage_effect_definition_runs},
@@ -548,6 +553,7 @@ struct tag_swap_type const tag_swap_types[] =
 	{"struct scenario_netgame_equipment", 144, 3, struct_scenario_netgame_equipment_runs},
 	{"struct scenario_netgame_flag", 148, 3, struct_scenario_netgame_flag_runs},
 	{"struct scenario_object_name", 36, 1, struct_scenario_object_name_runs},
+	{"struct scenario_object_palette_entry", 48, 1, struct_scenario_object_palette_entry_runs},
 	{"struct scenario_starting_equipment", 204, 3, struct_scenario_starting_equipment_runs},
 	{"struct scenario_starting_profile", 104, 4, struct_scenario_starting_profile_runs},
 	{"struct scenario_structure_bsp_reference", 32, 2, struct_scenario_structure_bsp_reference_runs},
@@ -655,4 +661,4 @@ struct tag_swap_type const tag_swap_types[] =
 	{"word", 2, 1, word_runs},
 };
 
-long const tag_swap_type_count = 321;
+long const tag_swap_type_count = 324;

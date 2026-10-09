@@ -951,7 +951,7 @@ static struct tag_schema_field const control_fields[] =
 
 /* (it ends where the tag does: before reserved88, as control_definition_schema) */
 static struct tag_schema_definition const control_schema =
-	{ "control", offsetof(struct _control_definition, reserved88), control_fields };
+	{ "control", offsetof(struct _control_definition, reserved88), control_fields, "struct _control_definition" };
 
 static struct tag_schema_field const control_definition_fields[] =
 {
@@ -1109,7 +1109,8 @@ static struct tag_schema_definition const machine_definition_schema =
 /* (a control tag ends at its denied effect: control_definition's reserved
 bytes after it are not in the tag) */
 static struct tag_schema_definition const control_definition_schema =
-	{ "control_definition", offsetof(struct control_definition, control.reserved88), control_definition_fields };
+	{ "control_definition", offsetof(struct control_definition, control.reserved88), control_definition_fields,
+		"struct control_definition" };
 static struct tag_schema_definition const light_fixture_definition_schema =
 	TAG_SCHEMA_DEFINITION(light_fixture_definition, struct device_definition, light_fixture_definition_fields);
 static struct tag_schema_definition const actor_definition_schema =

@@ -265,7 +265,9 @@ static struct tag_swap_type const *definition_type(struct tag_schema_definition 
 		{
 			struct tag_swap_type const *type = &tag_swap_types[index];
 
-			if (type->size != definition->size)
+			/* (a definition may be the start of its structure: a control
+			tag ends at its denied effect) */
+			if (type->size < definition->size)
 				type = NULL;
 			tag_byte_swap_globals.types[slot].definition = definition;
 			tag_byte_swap_globals.types[slot].type = type;
@@ -319,12 +321,36 @@ static void relocate(struct swap_region const *region, void *pointer_address)
 static void swap_children(struct swap_region *region, byte *base, struct tag_schema_definition const *definition,
 	short depth);
 
-/* the structure at base (its own integers and those of the structures in
-it), then its blocks' elements */
-static void swap_element(struct swap_region *region, byte *base, struct tag_schema_definition const *definition,
+/* whether the byte at offset in a definition's structure is in one of its
+structure fields (_tag_schema_struct), which are turned around by their own
+definitions: a schema may see a structure's bytes as another structure than
+the game's declaration does (a contrail's shader, declared with reserved bytes,
+is a shader_effect_definition), and the schema's is the more exact */
+static boolean in_structure_field(struct tag_schema_definition const *definition, long offset)
+{
+	struct tag_schema_field const *field;
+
+	for (field = definition->fields; field->type != _tag_schema_terminator; field++)
+	{
+		if (field->type == _tag_schema_struct && offset >= field->offset &&
+			offset < field->offset + (long)field->size * field->count)
+		{
+			long within = (offset - field->offset) % field->size;
+
+			return within < ((struct tag_schema_definition const *)field->definition)->size;
+		}
+	}
+
+	return FALSE;
+}
+
+/* the integers of the structure at base, by its definition's type and those
+of its structure fields; FALSE if a type is missing */
+static boolean swap_structure(struct swap_region *region, byte *base, struct tag_schema_definition const *definition,
 	short depth)
 {
 	struct tag_swap_type const *type = definition_type(definition);
+	struct tag_schema_field const *field;
 	long index;
 
 	if (!type)
@@ -332,14 +358,49 @@ static void swap_element(struct swap_region *region, byte *base, struct tag_sche
 		report("tag_byte_swap: no swap codes for %s (%s): tag_swap_codes.c is out of date",
 			definition->name, definition->type_name ? definition->type_name : "?");
 		region->failed = TRUE;
-		return;
+		return FALSE;
 	}
+	if (depth >= MAXIMUM_SWAP_DEPTH)
+		return TRUE;
+	for (index = 0; index < type->run_count; index++)
+	{
+		struct tag_swap_run const *run = &type->runs[index];
+		short item;
+
+		for (item = 0; item < run->count; item++)
+		{
+			long offset = run->offset + item * run->size;
+
+			/* (only what the definition covers of its structure) */
+			if (offset + run->size > definition->size)
+				break;
+			if (!in_structure_field(definition, offset))
+				swap_run(base + offset, run->size, 1);
+		}
+	}
+	for (field = definition->fields; field->type != _tag_schema_terminator && !region->failed; field++)
+	{
+		short item;
+
+		if (field->type != _tag_schema_struct)
+			continue;
+		for (item = 0; item < field->count; item++)
+			swap_structure(region, base + field->offset + item * field->size, field->definition, depth + 1);
+	}
+
+	return !region->failed;
+}
+
+/* the structure at base (its own integers and those of the structures in
+it), then its blocks' elements */
+static void swap_element(struct swap_region *region, byte *base, struct tag_schema_definition const *definition,
+	short depth)
+{
 	if (!region_contains(region, base, (unsigned long)definition->size) ||
 		!mark(region, base, (unsigned long)definition->size))
 		return;
-	for (index = 0; index < type->run_count; index++)
-		swap_run(base + type->runs[index].offset, type->runs[index].size, type->runs[index].count);
-	swap_children(region, base, definition, depth);
+	if (swap_structure(region, base, definition, depth))
+		swap_children(region, base, definition, depth);
 
 	return;
 }

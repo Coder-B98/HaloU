@@ -22,6 +22,13 @@ walk turn bytes back or loop. The validator refuses such a map afterwards.
 What a tag data field holds is its own layout, not a structure the schemas
 name: those whose layout is known are turned around here (the unicode string
 lists' UTF-16 text); the others are counted and logged, still to be done.
+
+The geometry the game draws is also bytes of its own layout: a model part's
+vertices and triangle indices (in the buffers the tags' header lists) and a
+structure bsp material's vertices (in its compressed vertex data, and the
+buffers the bsp's header lists). Each is turned around as its part or
+material is, by its vertex type's layout (swap_geometry), a vertex or index
+at a time, so that buffers parts share are turned around once.
 */
 
 /* ---------- headers */
@@ -29,6 +36,8 @@ lists' UTF-16 text); the others are counted and logged, still to be done.
 #include "cseries.h"
 #include "tag_schema.h"
 #include "tag_byte_swap.h"
+#include "rasterizer/rasterizer_geometry.h"
+#include "structures/structure_bsp_definitions.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -108,6 +117,16 @@ struct swap_structure_bsp_header
 	unsigned long signature;
 };
 
+/* a model's part (tag_schema_models.c's struct model_geometry_part): its
+buffers, after its own fields and its copies' blocks */
+struct swap_model_geometry_part
+{
+	byte reserved[0x44];
+	struct triangle_buffer triangle_buffer;
+	struct vertex_buffer vertex_buffer;
+};
+
+typedef char verify_swap_model_geometry_part_size[sizeof(struct swap_model_geometry_part) == 0x68 ? 1 : -1];
 typedef char verify_swap_tag_header_size[sizeof(struct swap_tag_header) == 0x24 ? 1 : -1];
 typedef char verify_swap_tag_instance_size[sizeof(struct swap_tag_instance) == 0x20 ? 1 : -1];
 typedef char verify_swap_structure_bsp_header_size[sizeof(struct swap_structure_bsp_header) == 0x18 ? 1 : -1];
@@ -396,6 +415,203 @@ static boolean swap_structure(struct swap_region *region, byte *base, struct tag
 	return !region->failed;
 }
 
+/* geometry */
+
+/* each vertex type's layout: runs of integers or reals (size bytes, count of
+them) from its start (rasterizer_geometry.c's and rasterizer_model_types.h's
+structures, in rasterizer_vertex_type_sizes' sizes) */
+struct vertex_run
+{
+	char size;
+	char count;
+};
+
+static struct vertex_run const vertex_layouts[NUMBER_OF_RASTERIZER_VERTEX_TYPES][4] =
+{
+	/* environment uncompressed: position, normal, binormal, tangent, texcoord */
+	{{4, 14}},
+	/* environment compressed: position, packed normal, binormal and tangent,
+	texcoord */
+	{{4, 8}},
+	/* environment lightmap uncompressed: incident radiosity, texcoord */
+	{{4, 5}},
+	/* environment lightmap compressed: packed incident radiosity, u, v */
+	{{4, 1}, {2, 2}},
+	/* model uncompressed: position, normal, binormal, tangent, texcoord, two
+	node indices, two node weights */
+	{{4, 14}, {2, 2}, {4, 2}},
+	/* model compressed: position, packed normal, binormal and tangent, two
+	short texcoords, two byte node indices, a node weight */
+	{{4, 6}, {2, 2}, {1, 2}, {2, 1}},
+	/* (the rest are the game's own, made as it runs: never in a map) */
+};
+
+static short const vertex_sizes[NUMBER_OF_RASTERIZER_VERTEX_TYPES] =
+{
+	56, 32, 20, 8, 68, 32, 24, 36, 20, 16, 16, 8
+};
+
+/* count vertices of a type at data, each turned around unless it already
+was (a buffer two parts share). FALSE if they are not in the region or their
+type is not one a map has */
+static boolean swap_vertices(struct swap_region *region, byte *data, long count, short type)
+{
+	long size;
+	long index;
+
+	if (count <= 0)
+		return TRUE;
+	if (type < 0 || type >= NUMBER_OF_RASTERIZER_VERTEX_TYPES || !vertex_layouts[type][0].size)
+		return FALSE;
+	size = vertex_sizes[type];
+	if ((unsigned long)count > region->size / (unsigned long)size || !region_contains(region, data, count * size))
+		return FALSE;
+	for (index = 0; index < count; index++)
+	{
+		byte *vertex = data + index * size;
+		struct vertex_run const *run;
+
+		if (!mark(region, vertex, (unsigned long)size))
+			continue;
+		for (run = vertex_layouts[type]; run < vertex_layouts[type] + 4 && run->size; run++)
+		{
+			swap_run(vertex, run->size, run->count);
+			vertex += run->size * run->count;
+		}
+	}
+
+	return TRUE;
+}
+
+/* count 16-bit triangle indices at data, each turned around unless it
+already was */
+static boolean swap_indices(struct swap_region *region, byte *data, long count)
+{
+	long index;
+
+	if (count <= 0)
+		return TRUE;
+	if ((unsigned long)count > region->size / 2 || !region_contains(region, data, count * 2))
+		return FALSE;
+	for (index = 0; index < count; index++)
+	{
+		if (mark(region, data + index * 2, 2))
+			swap_run(data + index * 2, 2, 1);
+	}
+
+	return TRUE;
+}
+
+/* the bytes a header's buffer (its D3DResource, turned around with the
+header: swap_buffers) holds, or NULL if it is not one in the region */
+static byte *buffer_data(struct swap_region const *region, void const *buffer)
+{
+	byte *data;
+
+	if (!buffer || !region_contains(region, buffer, BUFFER_LONGS * 4))
+		return NULL;
+	memcpy(&data, (byte const *)buffer + 4, 4);
+
+	return data;
+}
+
+static void geometry_report(char const *what, char const *name)
+{
+	report("tag_byte_swap: %s's %s are not in the map: left as read", what, name);
+
+	return;
+}
+
+/* a model part's vertices and indices, or a structure bsp material's
+vertices, as the part or material is turned around (its counts and types
+now this machine's) */
+static void swap_geometry(struct swap_region *region, byte *base, struct tag_schema_definition const *definition)
+{
+	if (!definition->type_name)
+		return;
+	if (!strcmp(definition->type_name, "struct model_geometry_part"))
+	{
+		struct swap_model_geometry_part *part = (struct swap_model_geometry_part *)base;
+		struct triangle_buffer const *triangles = &part->triangle_buffer;
+		long index_count = 0;
+		byte *data;
+
+		if (part->vertex_buffer.hardware_format)
+		{
+			data = buffer_data(region, part->vertex_buffer.hardware_format);
+			if (!data || !swap_vertices(region, data, part->vertex_buffer.count, part->vertex_buffer.type))
+				geometry_report("model_geometry_part", "vertices");
+		}
+		if (triangles->type == _triangle_buffer_type_triangles)
+			index_count = triangles->count > 0 && triangles->count <= LONG_MAX / 3 ? 3 * triangles->count : 0;
+		else if (triangles->type == _triangle_buffer_type_precompiled_strip)
+			index_count = triangles->count > 0 && triangles->count <= LONG_MAX - 2 ? triangles->count + 2 : 0;
+		if (triangles->hardware_format && index_count)
+		{
+			data = buffer_data(region, triangles->hardware_format);
+			if (!data || !swap_indices(region, data, index_count))
+				geometry_report("model_geometry_part", "indices");
+		}
+	}
+	else if (!strcmp(definition->type_name, "struct structure_material"))
+	{
+		struct structure_material *material = (struct structure_material *)base;
+		struct vertex_buffer const *vertices = &material->vertices;
+		struct vertex_buffer const *lightmap_vertices = &material->lightmap_vertices;
+		/* (its vertex data: each vertex, then each lightmap vertex, of the
+		compressed types in the compressed data and the uncompressed types in
+		the uncompressed) */
+		struct
+		{
+			struct tag_data const *data;
+			short type;
+			short lightmap_type;
+		} const datas[] =
+		{
+			{&material->compressed_vertex_data, _rasterizer_vertex_type_environment_compressed,
+				_rasterizer_vertex_type_environment_lightmap_compressed},
+			{&material->uncompressed_vertex_data, _rasterizer_vertex_type_environment_uncompressed,
+				_rasterizer_vertex_type_environment_lightmap_uncompressed},
+		};
+		short index;
+
+		for (index = 0; index < NUMBEROF(datas); index++)
+		{
+			struct tag_data const *data = datas[index].data;
+			long vertex_count = vertices->count;
+			long lightmap_count = lightmap_vertices->count;
+			long size = data->size;
+
+			if (size <= 0 || !data->address || !region_contains(region, data->address, (unsigned long)size))
+				continue;
+			/* (what of its counts the data holds) */
+			vertex_count = PIN(vertex_count, 0, size / vertex_sizes[datas[index].type]);
+			size -= vertex_count * vertex_sizes[datas[index].type];
+			lightmap_count = PIN(lightmap_count, 0, size / vertex_sizes[datas[index].lightmap_type]);
+			swap_vertices(region, data->address, vertex_count, datas[index].type);
+			swap_vertices(region, (byte *)data->address + vertex_count * vertex_sizes[datas[index].type],
+				lightmap_count, datas[index].lightmap_type);
+		}
+		/* (its buffers: the same bytes, or the bsp header's own) */
+		if (vertices->hardware_format)
+		{
+			byte *data = buffer_data(region, vertices->hardware_format);
+
+			if (!data || !swap_vertices(region, data, vertices->count, vertices->type))
+				geometry_report("structure_material", "vertices");
+		}
+		if (lightmap_vertices->hardware_format && lightmap_vertices->count)
+		{
+			byte *data = buffer_data(region, lightmap_vertices->hardware_format);
+
+			if (!data || !swap_vertices(region, data, lightmap_vertices->count, lightmap_vertices->type))
+				geometry_report("structure_material", "lightmap vertices");
+		}
+	}
+
+	return;
+}
+
 /* the structure at base (its own integers and those of the structures in
 it), then its blocks' elements */
 static void swap_element(struct swap_region *region, byte *base, struct tag_schema_definition const *definition,
@@ -405,7 +621,10 @@ static void swap_element(struct swap_region *region, byte *base, struct tag_sche
 		!mark(region, base, (unsigned long)definition->size))
 		return;
 	if (swap_structure(region, base, definition, depth))
+	{
+		swap_geometry(region, base, definition);
 		swap_children(region, base, definition, depth);
+	}
 
 	return;
 }

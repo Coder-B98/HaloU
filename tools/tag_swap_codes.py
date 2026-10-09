@@ -44,6 +44,10 @@ BUILTINS = {"char": 1, "short": 2, "long": 4, "float": 4, "unsigned char": 1, "u
             "unsigned long": 4}
 
 
+# a run of pointers (tag_byte_swap.h, TAG_SWAP_POINTER)
+POINTER_RUN_SIZE = 5
+
+
 class Layout:
     def __init__(self):
         self.runs = []  # [offset, size, count]
@@ -53,14 +57,18 @@ class Layout:
         if size == 1:
             return
         last = self.runs[-1] if self.runs else None
-        if last and last[1] == size and last[0] + last[1] * last[2] == offset:
+        stride = 4 if size == POINTER_RUN_SIZE else size
+        if last and last[1] == size and last[0] + stride * last[2] == offset:
             last[2] += count
         else:
             self.runs.append([offset, size, count])
 
     def walk(self, t, offset, where):
         t = t.get_canonical()
-        if t.kind in SCALARS:
+        if t.kind == K.POINTER:
+            # (a pointer: turned around, then moved with the tag cache)
+            self.add(offset, POINTER_RUN_SIZE)
+        elif t.kind in SCALARS:
             self.add(offset, SCALARS[t.kind])
         elif t.kind == K.ENUM:
             self.walk(t.get_declaration().enum_type, offset, where)

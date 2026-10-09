@@ -367,15 +367,20 @@ static boolean swap_structure(struct swap_region *region, byte *base, struct tag
 		struct tag_swap_run const *run = &type->runs[index];
 		short item;
 
+		short size = run->size == TAG_SWAP_POINTER ? 4 : run->size;
+
 		for (item = 0; item < run->count; item++)
 		{
-			long offset = run->offset + item * run->size;
+			long offset = run->offset + item * size;
 
 			/* (only what the definition covers of its structure) */
-			if (offset + run->size > definition->size)
+			if (offset + size > definition->size)
 				break;
-			if (!in_structure_field(definition, offset))
-				swap_run(base + offset, run->size, 1);
+			if (in_structure_field(definition, offset))
+				continue;
+			swap_run(base + offset, size, 1);
+			if (run->size == TAG_SWAP_POINTER)
+				relocate(region, base + offset);
 		}
 	}
 	for (field = definition->fields; field->type != _tag_schema_terminator && !region->failed; field++)
@@ -458,7 +463,6 @@ static void swap_children(struct swap_region *region, byte *base, struct tag_sch
 				struct tag_schema_definition const *element = field->definition;
 				long element_index;
 
-				relocate(region, &block->address);
 				if (block->count <= 0 || !block->address ||
 					(unsigned long)block->count > region->size / (unsigned long)element->size)
 					break;
@@ -469,13 +473,7 @@ static void swap_children(struct swap_region *region, byte *base, struct tag_sch
 
 			case _tag_schema_data:
 			case _tag_schema_file_data:
-				if (field->type == _tag_schema_data)
-					relocate(region, &((struct tag_data *)address)->address);
 				swap_data(region, (struct tag_data *)address, definition, field);
-				break;
-
-			case _tag_schema_reference:
-				relocate(region, &((struct tag_reference *)address)->name);
 				break;
 
 			default:

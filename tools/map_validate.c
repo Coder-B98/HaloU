@@ -153,6 +153,10 @@ long tag_byte_swap_unswapped_data(void);
 #endif
 
 static int quiet;
+/* where the tag cache is, less where the Xbox had it: 0 unless
+MAP_VALIDATE_RELOCATE is set (big-endian only), which puts the tag cache
+elsewhere, as the Wii U does, so that every pointer in the tags moves */
+static long relocation;
 /* (fuzzing: each bsp is checked twice, and whether a second check of one
 found more to correct) */
 static int recheck;
@@ -281,7 +285,7 @@ static int map_check(struct cache_file_header const *header, unsigned char const
 	memset(tag_cache, 0xCD, TAG_CACHE_SIZE);
 	memcpy(tag_cache, bytes + header->tag_data_offset, header->tag_data_size);
 #if MAP_VALIDATE_BIG_ENDIAN
-	if (!tag_byte_swap_tags(tag_cache, header->tag_data_size, 0))
+	if (!tag_byte_swap_tags(tag_cache, header->tag_data_size, relocation))
 	{
 		printf("%s: its tags cannot be turned around\n", name);
 		return 1;
@@ -315,7 +319,7 @@ static int map_check(struct cache_file_header const *header, unsigned char const
 	{
 		struct scenario_structure_bsp_reference *reference =
 			(struct scenario_structure_bsp_reference *)bsps->address + index;
-		unsigned long load = (unsigned long)reference->base_address - TAG_CACHE_BASE_ADDRESS;
+		unsigned long load = (unsigned long)reference->base_address - (unsigned long)tag_cache;
 		/* (the game reads whole sectors) */
 		unsigned long read_size = ((unsigned long)reference->file_size + CACHE_FILE_SECTOR_SIZE - 1) &
 			~(unsigned long)(CACHE_FILE_SECTOR_SIZE - 1);
@@ -334,7 +338,7 @@ static int map_check(struct cache_file_header const *header, unsigned char const
 		memset(tag_cache + header->tag_data_size, 0xCD, TAG_CACHE_SIZE - header->tag_data_size);
 		memcpy(reference->base_address, bytes + reference->file_offset, reference->file_size);
 #if MAP_VALIDATE_BIG_ENDIAN
-		if (!tag_byte_swap_structure_bsp(reference->base_address, reference->file_size, 0))
+		if (!tag_byte_swap_structure_bsp(reference->base_address, reference->file_size, relocation))
 		{
 			printf("%s: its structure bsp %ld cannot be turned around\n", name, index);
 			refused = 1;
@@ -984,9 +988,20 @@ int main(int argc, char **argv)
 	unsigned long seed = 1;
 	int argument;
 
+#if MAP_VALIDATE_BIG_ENDIAN
+	if (getenv("MAP_VALIDATE_RELOCATE"))
+	{
+		tag_cache = mmap(NULL, TAG_CACHE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+		if (tag_cache == MAP_FAILED)
+			return 2;
+		relocation = (long)((unsigned long)tag_cache - TAG_CACHE_BASE_ADDRESS);
+		printf("map_validate: the tag cache is at %08lx\n", (unsigned long)tag_cache);
+	}
+	else
+#endif
 	tag_cache = mmap((void *)TAG_CACHE_BASE_ADDRESS, TAG_CACHE_SIZE, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-	if (tag_cache != (unsigned char *)TAG_CACHE_BASE_ADDRESS)
+	if (!relocation && tag_cache != (unsigned char *)TAG_CACHE_BASE_ADDRESS)
 	{
 		fprintf(stderr, "map_validate: the tag cache's address (%08x) is taken\n", TAG_CACHE_BASE_ADDRESS);
 		return 2;

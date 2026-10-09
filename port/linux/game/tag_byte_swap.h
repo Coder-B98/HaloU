@@ -12,8 +12,15 @@ machine's (the Wii U's), as they load and before the validator
 
 /* ---------- structures */
 
-/* count integers of size bytes (2, 4 or 8), one after another, at offset in a
-structure */
+enum
+{
+	/* a run's size for 4-byte pointers, which are also moved with the tag
+	cache */
+	TAG_SWAP_POINTER = 5,
+};
+
+/* count integers of size bytes (2, 4 or 8, or pointers: TAG_SWAP_POINTER),
+one after another, at offset in a structure */
 struct tag_swap_run
 {
 	long offset;

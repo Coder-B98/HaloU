@@ -288,14 +288,20 @@ static short *decode_adpcm(const unsigned char *source, unsigned long size, unsi
 	return samples;
 }
 
+/* 16-bit samples, little-endian as the Xbox wrote them: read a byte at a
+time, so that a big-endian machine (the Wii U) reads them the same */
 static short *decode_pcm(const unsigned char *source, unsigned long size, unsigned long channels,
 	unsigned long *frame_count)
 {
 	unsigned long frames = size / (2 * channels);
 	short *samples = malloc((frames ? frames : 1) * channels * sizeof(short));
+	unsigned long index;
 
 	if (samples)
-		memcpy(samples, source, frames * channels * sizeof(short));
+	{
+		for (index = 0; index < frames * channels; index++)
+			samples[index] = (short)(source[2 * index] | (source[2 * index + 1] << 8));
+	}
 	*frame_count = samples ? frames : 0;
 	return samples;
 }

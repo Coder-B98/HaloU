@@ -612,6 +612,16 @@ static long recorded_event_v1_size(
 	return 16;
 }
 
+/* a version 4 event's header byte (recorded_animation_playback.c's struct
+animation_event_header): read through the same bit-fields as the game, as
+the compiler lays them out (the Xbox's in the low bits first, a big-endian
+machine's in the high bits first: tag_byte_swap.c moves them) */
+struct recorded_event_header
+{
+	byte time_delta : 2;
+	byte event_type : 6;
+};
+
 /* a dry run of an event stream, as the game plays it: NULL if it is
 playable (its version known, every event of a known type and inside the
 stream, up to the end event), what is wrong otherwise. (A time delta the
@@ -642,14 +652,14 @@ static char const *recorded_animation_decode(
 
 		if (animation->version == RECORDED_ANIMATION_VERSION)
 		{
-			byte header;
+			struct recorded_event_header header;
 
 			if (offset >= size)
 				return "ends inside an event";
-			header = stream[offset];
-			event_type = header >> 2;
+			header = *(struct recorded_event_header const *)(stream + offset);
+			event_type = header.event_type;
 			/* (its time since the last: none or a tick, a byte or a word) */
-			switch (header & 3)
+			switch (header.time_delta)
 			{
 			case 0:
 			case 1:

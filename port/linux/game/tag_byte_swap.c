@@ -20,8 +20,11 @@ a byte), so that blocks that overlap or point at each other cannot make the
 walk turn bytes back or loop. The validator refuses such a map afterwards.
 
 What a tag data field holds is its own layout, not a structure the schemas
-name: those whose layout is known are turned around here (the unicode string
-lists' UTF-16 text); the others are counted and logged, still to be done.
+name. Most are a run of one integer size (data_layouts): text, pixels and
+other bytes are left as they are, wide text is shorts, the clusters' visible
+sets longs. A recorded animation's event stream is read event by event
+(swap_event_stream). A sound's samples are left for the sound player, which
+reads them as little-endian. Any other is counted and logged.
 
 The geometry the game draws is also bytes of its own layout: a model part's
 vertices and triangle indices (in the buffers the tags' header lists) and a
@@ -49,6 +52,7 @@ index. Their strings are text, left as they are.
 #include "tag_byte_swap.h"
 #include "rasterizer/rasterizer_geometry.h"
 #include "hs/hs.h"
+#include "cutscene/recorded_animation_definitions.h"
 #include "hs/hs_scenario_definitions.h"
 #include "memory/data.h"
 #include "models/model_animation_definitions.h"
@@ -79,10 +83,6 @@ enum
 
 	/* the type lookup's table (a power of two, more than the types) */
 	SWAP_TYPE_TABLE_SIZE = 1024,
-
-	/* the unicode string lists' text (tag_schema_render.c: its maximum is
-	twice a string list's) */
-	UNICODE_STRING_MAXIMUM = 2 * SHORT_MAX,
 };
 
 /* ---------- structures */
@@ -224,9 +224,24 @@ static void swap_run(byte *address, short size, short count)
 	return;
 }
 
+/* count integers of size bytes, however many (swap_run's count is a short) */
+static void swap_integers(byte *address, short size, long count)
+{
+	while (count > 0)
+	{
+		short run = (short)MIN(count, SHORT_MAX);
+
+		swap_run(address, size, run);
+		address += run * size;
+		count -= run;
+	}
+
+	return;
+}
+
 static void swap_longs(void *address, long count)
 {
-	swap_run(address, 4, (short)count);
+	swap_integers(address, 4, count);
 
 	return;
 }
@@ -944,6 +959,155 @@ static void swap_element(struct swap_region *region, byte *base, struct tag_sche
 	return;
 }
 
+/* tag data that is a run of one size of integer, by the schema it is in and
+its field: 1 for bytes (left as they are), 2 for shorts, 4 for longs */
+static struct
+{
+	char const *definition_name;
+	char const *field_name;
+	short integer_size;
+} const data_layouts[] =
+{
+	/* the clusters' potentially visible sets: a bit vector (longs,
+	structure_bsp_get_cluster_pvs) a cluster */
+	{ "structure_bsp", "cluster_data", 4 },
+	/* a byte for each pair of clusters */
+	{ "structure_bsp", "sound_cluster_data", 1 },
+	/* a byte a tick, how open the speaker's mouth is */
+	{ "sound_permutation", "mouth_data", 1 },
+	/* the messages' text: wide characters (wchar_t, two bytes) */
+	{ "hud_message_text", "text_data", 2 },
+	/* a byte a pixel, how much ink */
+	{ "font", "pixels", 1 },
+	/* text: a string list's is ASCII, a unicode string list's is UTF-16 */
+	{ "string_list_entry", "string", 1 },
+	{ "unicode_string_list_entry", "string", 2 },
+	{ "hs_source_file", "source", 1 },
+};
+
+/* the integer size of the run a tag data field is, or 0 if it isn't one */
+static short data_integer_size(struct tag_schema_definition const *definition,
+	struct tag_schema_field const *field)
+{
+	short index;
+
+	for (index = 0; index < NUMBEROF(data_layouts); index++)
+	{
+		if (!strcmp(data_layouts[index].definition_name, definition->name) &&
+			!strcmp(data_layouts[index].field_name, field->name))
+		{
+			return data_layouts[index].integer_size;
+		}
+	}
+
+	return 0;
+}
+
+/* integers one after another in a stream: their size and how many */
+struct swap_integer_run
+{
+	signed char size;
+	signed char count;
+};
+
+/* a run of integers at *stream, turned around (bytes left as they are), and
+*stream moved past it. FALSE if it isn't all before end */
+static boolean swap_integer_run(byte **stream, byte const *end, struct swap_integer_run const *run)
+{
+	long bytes = run->size * run->count;
+
+	if (end - *stream < bytes)
+		return FALSE;
+	if (run->size > 1)
+		swap_run(*stream, run->size, run->count);
+	*stream += bytes;
+
+	return TRUE;
+}
+
+/* a recorded animation's event stream (recorded_animation_playback.c, the
+playback of version 4, the only one the maps have): its unit control's
+fields (recorded_animation_initialize.c's tables, for its unit control
+version), its controllers' six shorts, then its events up to the end event.
+An event is a header byte, a time delta of none, a byte or a word, and its
+data. The header byte is two bit-fields, the time delta's two bits and the
+event's six: the Xbox's compiler put the first in the low bits, a big-endian
+machine's puts it in the high bits, so the byte is turned around too (its
+low two bits moved to the top). FALSE if the stream is not one it can read
+(a version 1 to 3 stream, or one damaged) */
+static boolean swap_event_stream(byte *stream, long size,
+	struct recorded_animation_definition const *animation)
+{
+	/* each unit control version's fields: runs of integers (a size and how
+	many), ending with a size of 0. Version 0's are two bytes, three shorts, a
+	real vector2d and three real vector3ds */
+	static struct swap_integer_run const unit_control_fields[4][4] =
+	{
+		{ { 1, 2 }, { 2, 3 }, { 4, 2 + 3 * 3 }, { 0, 0 } },
+		{ { 4, 1 }, { 0, 0 } },
+		{ { 2, 1 }, { 0, 0 } },
+		{ { 2, 1 }, { 0, 0 } },
+	};
+	/* each event's data after its header and time delta (event_data_sizes):
+	none for the first two (the end's), a byte, a byte, a short, a short, a
+	real vector2d, eight of two chars, eight of two shorts */
+	static struct swap_integer_run const event_data[23] =
+	{
+		{ 0, 0 }, { 0, 0 }, { 1, 1 }, { 1, 1 }, { 2, 1 }, { 2, 1 }, { 4, 2 },
+		{ 1, 2 }, { 1, 2 }, { 1, 2 }, { 1, 2 }, { 1, 2 }, { 1, 2 }, { 1, 2 }, { 1, 2 },
+		{ 2, 2 }, { 2, 2 }, { 2, 2 }, { 2, 2 }, { 2, 2 }, { 2, 2 }, { 2, 2 }, { 2, 2 },
+	};
+	static struct swap_integer_run const controllers = { 2, 3 * 2 };
+	/* a time delta of zero, of one, a byte or a word */
+	static struct swap_integer_run const time_deltas[4] = { { 0, 0 }, { 0, 0 }, { 1, 1 }, { 2, 1 } };
+	enum
+	{
+		_event_end = 1,
+	};
+	byte *end = stream + size;
+	short version_count = (short)MIN(MAX(animation->unit_control_data_version, 1), 4);
+	short version_index;
+
+	if (animation->version != 4 || animation->unit_control_data_version > 4)
+		return FALSE;
+
+	/* the unit control */
+	for (version_index = 0; version_index < version_count; version_index++)
+	{
+		struct swap_integer_run const *run;
+
+		for (run = unit_control_fields[version_index]; run->size; run++)
+		{
+			if (!swap_integer_run(&stream, end, run))
+				return FALSE;
+		}
+	}
+
+	/* the controllers: facing, aiming and looking, a yaw and a pitch each */
+	if (!swap_integer_run(&stream, end, &controllers))
+		return FALSE;
+
+	/* the events */
+	while (stream < end)
+	{
+		byte header = *stream;
+		short time_delta = header & 3;
+		short event_type = header >> 2;
+
+		/* (the bit-fields where a big-endian machine's compiler has them) */
+		*stream++ = (byte)((time_delta << 6) | event_type);
+		if (!swap_integer_run(&stream, end, &time_deltas[time_delta]))
+			return FALSE;
+		if (event_type == _event_end)
+			return TRUE;
+		if (event_type >= NUMBEROF(event_data) || !swap_integer_run(&stream, end, &event_data[event_type]))
+			return FALSE;
+	}
+
+	/* (no end event) */
+	return FALSE;
+}
+
 /* a tag data field's bytes, where their layout is known */
 static void swap_data(struct swap_region *region, struct tag_data *data,
 	struct tag_schema_definition const *definition, struct tag_schema_field const *field)
@@ -953,17 +1117,39 @@ static void swap_data(struct swap_region *region, struct tag_data *data,
 	if (field->type == _tag_schema_file_data)
 	{
 		/* (its bytes are in the map file, read as they are needed: a sound's
-		samples) */
-		log_once_field(definition, field);
+		samples. They stay as the Xbox wrote them: the sound player reads
+		them a byte at a time, as little-endian, dsound_sdl.c's decode_adpcm
+		and decode_pcm) */
 		return;
 	}
 	if (!region_contains(region, data->address, (unsigned long)data->size) ||
 		!mark(region, data->address, (unsigned long)data->size))
 		return;
-	if (field->maximum == UNICODE_STRING_MAXIMUM)
-		swap_run(data->address, 2, (short)(data->size / 2));
-	else
+	if (!strcmp(definition->name, "recorded_animation"))
+	{
+		/* (the structure the data is in: its version says how to read it) */
+		if (!swap_event_stream(data->address, data->size,
+			(struct recorded_animation_definition const *)((byte *)data - field->offset)))
+			log_once_field(definition, field);
+		return;
+	}
+	switch (data_integer_size(definition, field))
+	{
+	case 1:
+		break;
+
+	case 2:
+		swap_integers(data->address, 2, data->size / 2);
+		break;
+
+	case 4:
+		swap_longs(data->address, data->size / 4);
+		break;
+
+	default:
 		log_once_field(definition, field);
+		break;
+	}
 
 	return;
 }

@@ -182,7 +182,12 @@ wchar_t *msvc_wcspbrk(const wchar_t *string, const wchar_t *characters)
 wchar_t *msvc_wcstok(wchar_t *string, const wchar_t *delimiters)
 {
 	/* MSVC keeps the tokenizer state per thread */
+#ifdef __WIIU__
+	/* (no __thread on the Wii U: wiiu_thread_locals.h) */
+#define next (*(wchar_t **)&platform_thread_locals()->wcstok_next)
+#else
 	static __thread wchar_t *next;
+#endif
 	wchar_t *token;
 
 	if (string)
@@ -203,6 +208,9 @@ wchar_t *msvc_wcstok(wchar_t *string, const wchar_t *delimiters)
 		next = NULL;
 	return token;
 }
+#ifdef __WIIU__
+#undef next
+#endif
 
 wchar_t *msvc_wcsdup(const wchar_t *string)
 {

@@ -191,6 +191,7 @@ symbols in this file:
 #include "scenario/scenario_definitions.h"
 #include "rasterizer/rasterizer.h"
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
+#include "tag_byte_swap.h" /* port: port/linux/game/tag_byte_swap.c */
 
 #include <xtl.h>
 
@@ -1267,6 +1268,18 @@ static void cache_file_get_map_path(
 	return;
 }
 
+/* port: a map's header as read, in this machine's byte order (a map's are
+the Xbox's: port/linux/game/tag_byte_swap.c) */
+static void cache_file_header_byte_swap(
+	struct cache_file_header *header)
+{
+#if TAG_BYTE_SWAP_NEEDED
+	tag_byte_swap_cache_file_header(header);
+#else
+	(void)header;
+#endif
+}
+
 static boolean cache_file_read_header_from_dvd(
 	const char *map_name,
 	struct cache_file_header *header)
@@ -1295,7 +1308,7 @@ static boolean cache_file_read_header_from_dvd(
 			&bytes_read,
 			NULL) &&
 			bytes_read == sizeof(struct cache_file_header) &&
-			cache_file_header_verify(header, path, TRUE))
+			(cache_file_header_byte_swap(header), cache_file_header_verify(header, path, TRUE)))
 		{
 			result = TRUE;
 		}
@@ -1588,6 +1601,7 @@ static void cached_map_file_read_header(
 	cached_map_block_on_async_request(&completion_flag);
 	if (completion_flag)
 	{
+		cache_file_header_byte_swap(&map_file->header);
 		if (!cache_file_header_verify(&map_file->header, path, FALSE))
 		{
 			memset(&map_file->header, 0, sizeof(struct cache_file_header));

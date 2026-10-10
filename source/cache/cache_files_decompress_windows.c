@@ -228,6 +228,7 @@ which are anyone's files; its inflate needs about 40 KB of ZLIB_BUFFER_SIZE,
 and frees what it takes in the reverse order, as cache_copy_compressed_free
 wants */
 #include "../../port/third_party/zlib/zlib_prefixed.h"
+#include "tag_byte_swap.h" /* port: port/linux/game/tag_byte_swap.c */
 
 #include <xtl.h>
 
@@ -1431,6 +1432,10 @@ static void cache_copy_initialize_read_data(
 
 	cache_copy_issue_read_raw(self, &self->header, sizeof(self->header), 0);
 	cache_copy_block_on_raw_read(self);
+#if TAG_BYTE_SWAP_NEEDED
+	/* port: in this machine's byte order (written back in the Xbox's, below) */
+	tag_byte_swap_cache_file_header(&self->header);
+#endif
 
 	cache_file_header_verify(&self->header, "blah", TRUE);
 
@@ -1793,8 +1798,19 @@ static unsigned long __stdcall simple_cache_copy_thread(
 
 				if (!self->write_bytes_left)
 				{
+#if TAG_BYTE_SWAP_NEEDED
+					/* port: the header written as the map has it, in the Xbox's
+					byte order (the copy reads it again as any map's) */
+					static struct cache_file_header written_header;
+
+					written_header = self->header;
+					tag_byte_swap_cache_file_header(&written_header);
+					cache_copy_wait_for_async_io(self);
+					cache_copy_issue_write_raw(self, &written_header, sizeof(written_header), 0);
+#else
 					cache_copy_wait_for_async_io(self);
 					cache_copy_issue_write_raw(self, &self->header, sizeof(self->header), 0);
+#endif
 				}
 			}
 

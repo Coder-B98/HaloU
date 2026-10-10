@@ -11,7 +11,7 @@ which the GPU never reads directly, hold a virtual one). Texel layout
 follows xbox_textures.c, so locks and uploads agree.
 */
 
-#include "xgpu.h"
+#include "xbox_texture_layout.h"
 
 #include <stdlib.h>
 #include <string.h>

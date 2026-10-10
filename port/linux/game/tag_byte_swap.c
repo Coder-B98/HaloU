@@ -1263,8 +1263,12 @@ void tag_byte_swap_cache_file_header(
 	byte *bytes = header;
 
 	/* (header_signature, version, file_length, reserved, tag_data_offset,
-	tag_data_size; the name and build are text; footer_signature) */
+	tag_data_size; the name and build are text; scenario_type, checksum;
+	footer_signature). Swapping it twice gives it back as it was read, so
+	the same call turns it around again to be written. */
 	swap_longs(bytes, 6);
+	swap_integers(bytes + 0x60, 2, 1);
+	swap_longs(bytes + 0x64, 1);
 	swap_longs(bytes + 0x7FC, 1);
 
 	return;

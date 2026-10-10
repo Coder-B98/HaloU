@@ -35,6 +35,22 @@ layout: saved games of builds before it no longer load. */
 #define HALO_PORT_GAME_STATE_GPU_SIZE 0x40000 /* (0x40000) */
 #define HALO_PORT_GAME_STATE_SIZE (HALO_PORT_GAME_STATE_CPU_SIZE+HALO_PORT_GAME_STATE_GPU_SIZE)
 
+/* ---------- the Xbox's fixed addresses
+
+The game state and the tag cache are at fixed addresses in the Xbox's memory
+window (0x80000000 plus the physical address). The Wii U gives a program no
+fixed addresses: its window is wherever its heap had room, aligned to its
+size (port/wiiu/src/wiiu_memory.c), so an Xbox address is there the window's
+base plus the address's physical part. Elsewhere the window is where the
+Xbox's was. */
+
+#ifdef __WIIU__
+extern unsigned long platform_contiguous_base;
+#define HALO_PORT_XBOX_ADDRESS(address) (platform_contiguous_base | ((unsigned long)(address) & 0x7FFFFFFFUL))
+#else
+#define HALO_PORT_XBOX_ADDRESS(address) ((unsigned long)(address))
+#endif
+
 /* ---------- textures
 
 The texture cache holds the textures being drawn in 16 KB pages, 22 MB of
@@ -44,9 +60,9 @@ is drawn as the default one ("YOU GOT STABBED" in debug.txt; Elite_Alpha_Siege
 did at 22 MB), and a frame of bigass_v3 draws more than 64 MB (DamnationCE's
 measurement). The desktop builds' cache is 256 MB, half their 512 MB memory
 window (port/linux/src/platform.h), whose pages are backed as they are used.
-Android's window is 128 MB, and its cache the Xbox's. */
+Android's and the Wii U's windows are 128 MB, and their caches the Xbox's. */
 
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) || defined(__WIIU__)
 #define HALO_PORT_TEXTURE_CACHE_PAGE_COUNT 0x580 /* (0x580) */
 #else
 #define HALO_PORT_TEXTURE_CACHE_PAGE_COUNT 0x4000 /* (0x580) */

@@ -14,7 +14,9 @@ threads, asynchronous procedure calls, time, memory and debug output.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __WIIU__
 #include <sys/mman.h>
+#endif
 #include <time.h>
 #include <unistd.h>
 
@@ -56,7 +58,12 @@ void platform_unimplemented(const char *name)
 
 /* ---------- last error */
 
+#ifdef __WIIU__
+/* (no __thread on the Wii U: wiiu_thread_locals.h) */
+#define platform_last_error (platform_thread_locals()->last_error)
+#else
 static __thread DWORD platform_last_error;
+#endif
 
 DWORD WINAPI GetLastError(void)
 {
@@ -168,8 +175,13 @@ struct platform_apc
 	void *context[3];
 };
 
+#ifdef __WIIU__
+#define platform_apc_head (*(struct platform_apc **)&platform_thread_locals()->apc_head)
+#define platform_apc_tail (*(struct platform_apc **)&platform_thread_locals()->apc_tail)
+#else
 static __thread struct platform_apc *platform_apc_head;
 static __thread struct platform_apc *platform_apc_tail;
+#endif
 
 void platform_queue_apc(platform_apc_routine routine, void *context0, void *context1, void *context2)
 {
@@ -831,9 +843,17 @@ SIZE_T WINAPI LocalSize(HLOCAL memory)
 
 VOID WINAPI GlobalMemoryStatus(LPMEMORYSTATUS status)
 {
+#ifdef __WIIU__
+	/* (the Wii U's newlib has no count of free pages: the Xbox's 64 MB, all
+	free) */
+	long pages = 0;
+	long available = 0;
+	long page_size = 0;
+#else
 	long pages = sysconf(_SC_PHYS_PAGES);
 	long available = sysconf(_SC_AVPHYS_PAGES);
 	long page_size = sysconf(_SC_PAGESIZE);
+#endif
 	/* report at most an Xbox-sized 64 MB so size arithmetic in the game
 	cannot overflow 32 bits */
 	SIZE_T total = (SIZE_T)64 * 1024 * 1024;

@@ -11,6 +11,7 @@ device itself (d3d8_gl.c).
 #define __HALO_LINUX_XGPU_H
 
 #include "platform.h"
+#include "xbox_texture_layout.h"
 #include "gl.h"
 
 #ifdef HALO_ANDROID
@@ -175,23 +176,7 @@ lights and the ambient light) */
 
 /* ---------- textures */
 
-struct xgpu_texture_description
-{
-	DWORD format;       /* D3DFMT_* */
-	unsigned long width, height, depth, levels;
-	BOOL cube_map;
-	BOOL linear;        /* not swizzled; addressed with texel coordinates */
-	BOOL compressed;
-	unsigned long pitch; /* linear textures */
-	BOOL hires;         /* a high-res HUD texture drawn in the texture's place (hud_hires.h) */
-	BOOL hires_coverage; /* ... whose green is its coverage (a meter's) */
-};
-
-void xgpu_texture_describe(DWORD format_word, DWORD size_word, struct xgpu_texture_description *description);
-/* bytes of one face, mip levels included (cube faces are padded) */
-unsigned long xgpu_texture_face_size(const struct xgpu_texture_description *description);
-unsigned long xgpu_texture_level_offset(const struct xgpu_texture_description *description, unsigned long level);
-unsigned long xgpu_texture_level_pitch(const struct xgpu_texture_description *description, unsigned long level);
+/* (their layout in memory: xbox_texture_layout.h) */
 
 /* the GL texture for an Xbox texture header, uploading or refreshing it
 from guest memory as needed; *target receives GL_TEXTURE_2D etc. */

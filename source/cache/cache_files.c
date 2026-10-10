@@ -137,6 +137,7 @@ symbols in this file:
 #include "tag_schema.h"
 #include "custom_edition_cache.h" /* port: port/linux/game/custom_edition_cache.c */
 #include "cache_file_formats.h" /* port: CUSTOM_EDITION_TAG_CACHE_BYTES */
+#include "tag_byte_swap.h" /* port: port/linux/game/tag_byte_swap.c */
 
 /* ---------- constants */
 
@@ -706,7 +707,7 @@ long tag_loaded(
 void cache_files_enable_writes(
 	void)
 {
-	XPhysicalProtect((void *)0x803A6000, 0x01600000, PAGE_READWRITE);
+	XPhysicalProtect((void *)HALO_PORT_XBOX_ADDRESS(0x803A6000), 0x01600000, PAGE_READWRITE);
 
 	return;
 }
@@ -714,7 +715,7 @@ void cache_files_enable_writes(
 void cache_files_disable_writes(
 	void)
 {
-	XPhysicalProtect((void *)0x803A6000, 0x01600000, PAGE_READONLY);
+	XPhysicalProtect((void *)HALO_PORT_XBOX_ADDRESS(0x803A6000), 0x01600000, PAGE_READONLY);
 	XPhysicalProtect(
 		cache_file_globals.tag_header->vertex_buffers,
 		cache_file_globals.tag_header->vertex_buffer_count * 12,
@@ -1141,6 +1142,16 @@ boolean cache_files_give_time_to_precache(
 	return result;
 }
 
+#if TAG_BYTE_SWAP_NEEDED
+/* port: how far the tag cache is from where the Xbox had it, which a map's
+pointers were written for (0 but on the Wii U: halo_port_capacity.h) */
+static long cache_file_tag_cache_relocation(
+	void)
+{
+	return (long)((unsigned long)physical_memory_get_tag_cache_base_address() - 0x803A6000UL);
+}
+
+#endif
 long scenario_tags_load(
 	char const *scenario_name)
 {
@@ -1207,6 +1218,21 @@ long scenario_tags_load(
 
 				return NONE;
 			}
+#if TAG_BYTE_SWAP_NEEDED
+			/* port: the tags in this machine's byte order, and their pointers
+			moved to where its tag cache is (port/linux/game/tag_byte_swap.c) */
+			if (!tag_byte_swap_tags(
+				tag_cache_base_address,
+				cache_file_globals.header.tag_data_size,
+				cache_file_tag_cache_relocation()))
+			{
+				error(_error_silent, "the tags of '%s' could not be turned to this machine's byte order",
+					scenario_name);
+				cache_file_close();
+
+				return NONE;
+			}
+#endif
 			if (!cache_file_tag_header_verify(
 				tag_cache_base_address,
 				cache_file_globals.header.tag_data_size,
@@ -1338,6 +1364,19 @@ boolean scenario_structure_bsp_load(
 			}
 		}
 
+#if TAG_BYTE_SWAP_NEEDED
+		/* port: in this machine's byte order, as the tags were */
+		if (read_complete == TRUE && !custom_edition_cache_tags_loaded() &&
+			!tag_byte_swap_structure_bsp(
+				reference->base_address,
+				reference->file_size,
+				cache_file_tag_cache_relocation()))
+		{
+			error(_error_silent, "a structure bsp could not be turned to this machine's byte order");
+
+			return FALSE;
+		}
+#endif
 		/* port: a bsp that did not all read, or whose header's pointers
 		leave what was read, is not loaded */
 		structure_bsp_header = reference->base_address;

@@ -10,6 +10,16 @@ machine's (the Wii U's), as they load and before the validator
 #define __TAG_BYTE_SWAP_H
 #pragma once
 
+/* ---------- constants */
+
+/* whether this machine's byte order is not the maps' (a big-endian machine,
+the Wii U): what is read from a map is turned around as it is read */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define TAG_BYTE_SWAP_NEEDED 1
+#else
+#define TAG_BYTE_SWAP_NEEDED 0
+#endif
+
 /* ---------- structures */
 
 enum

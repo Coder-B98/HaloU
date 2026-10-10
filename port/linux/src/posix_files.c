@@ -63,6 +63,10 @@ int posix_set_file_times(const char *path,
 	posix_ulong access_seconds, posix_ulong access_nanoseconds,
 	posix_ulong modification_seconds, posix_ulong modification_nanoseconds)
 {
+#ifdef __WIIU__
+	/* (the Wii U's file systems keep no times a program can set) */
+	return 0;
+#else
 	struct timespec times[2];
 
 	times[0].tv_sec = (time_t)access_seconds;
@@ -70,6 +74,7 @@ int posix_set_file_times(const char *path,
 	times[1].tv_sec = (time_t)modification_seconds;
 	times[1].tv_nsec = modification_seconds ? (long)modification_nanoseconds : UTIME_OMIT;
 	return utimensat(AT_FDCWD, path, times, 0);
+#endif
 }
 
 int posix_seek(int descriptor, posix_long offset_low, posix_long offset_high, int whence,

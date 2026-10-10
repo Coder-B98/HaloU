@@ -14,7 +14,13 @@ it exists, so that the player's edits and comments stay.
 #include "port_config.h"
 #include "tomlc17.h"
 
+/* the Android and Wii U builds keep config.toml in the data folder their
+start-up names (HALO_DATA_ROOT), with the C library's files */
+#if defined(HALO_ANDROID) || defined(__WIIU__)
+#define HALO_CONFIG_IN_DATA_ROOT 1
+#else
 #include <SDL3/SDL.h>
+#endif
 #include <ctype.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -473,7 +479,7 @@ static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void config_path(char *path, size_t size)
 {
-#ifdef HALO_ANDROID
+#ifdef HALO_CONFIG_IN_DATA_ROOT
 	/* the data folder, which the app names (port/android/host/host_main.c) */
 	const char *root = getenv("HALO_DATA_ROOT");
 
@@ -489,7 +495,7 @@ static void config_path(char *path, size_t size)
 /* the whole file, NUL terminated, or NULL; free() it */
 static char *config_read_file(const char *path, size_t *size)
 {
-#ifdef HALO_ANDROID
+#ifdef HALO_CONFIG_IN_DATA_ROOT
 	FILE *file = fopen(path, "rb");
 	char *text = NULL;
 	long length;
@@ -532,7 +538,7 @@ static char *config_read_file(const char *path, size_t *size)
 
 static int config_write_file(const char *path, const char *text)
 {
-#ifdef HALO_ANDROID
+#ifdef HALO_CONFIG_IN_DATA_ROOT
 	FILE *file = fopen(path, "wb");
 	int written;
 

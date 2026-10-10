@@ -351,6 +351,88 @@ unsigned int _clearfp(void)
 	__builtin_arm_wsr64("fpsr", __builtin_arm_rsr64("fpsr") & ~0x9fULL);
 	return status;
 }
+#elif defined(__WIIU__)
+/* the Wii U's PowerPC: the rounding mode is FPSCR's RN (its low two bits),
+the sticky exception flags its OX, UX, ZX, XX and VX bits. Precision control
+and exception unmasking have no equivalent (the exceptions stay masked, as
+the game sets them); the rest of the MSVC control word is only remembered */
+static unsigned int msvc_control_word = CW_DEFAULT;
+
+enum
+{
+	FPSCR_VX = 0x20000000,
+	FPSCR_OX = 0x10000000,
+	FPSCR_UX = 0x08000000,
+	FPSCR_ZX = 0x04000000,
+	FPSCR_XX = 0x02000000,
+	/* the flags and their summary (FX), and the invalid operation's causes */
+	FPSCR_STICKY = 0x9ff80700,
+};
+
+static unsigned int fpscr_get(void)
+{
+	union { double value; unsigned long long bits; } fpscr;
+
+	__asm__ volatile("mffs %0" : "=f"(fpscr.value));
+	return (unsigned int)fpscr.bits;
+}
+
+static void fpscr_set(unsigned int value)
+{
+	union { double value; unsigned long long bits; } fpscr;
+
+	fpscr.bits = value;
+	__asm__ volatile("mtfsf 0xff, %0" : : "f"(fpscr.value));
+}
+
+unsigned int _control87(unsigned int new_value, unsigned int mask)
+{
+	unsigned int fpscr;
+
+	if (mask)
+	{
+		msvc_control_word = (msvc_control_word & ~mask) | (new_value & mask);
+		fpscr = fpscr_get() & ~3u;
+		switch (msvc_control_word & _MCW_RC)
+		{
+		case _RC_CHOP: fpscr |= 1; break;
+		case _RC_UP: fpscr |= 2; break;
+		case _RC_DOWN: fpscr |= 3; break;
+		default: break;
+		}
+		fpscr_set(fpscr);
+	}
+	return msvc_control_word;
+}
+
+unsigned int _controlfp(unsigned int new_value, unsigned int mask)
+{
+	/* _controlfp ignores the denormal mask */
+	return _control87(new_value, mask & ~_EM_DENORMAL);
+}
+
+unsigned int _statusfp(void)
+{
+	unsigned int fpscr = fpscr_get();
+	unsigned int result = 0;
+
+	/* as the x87 status word's low bits: invalid, denormal, zero divide,
+	overflow, underflow, precision */
+	if (fpscr & FPSCR_VX) result |= 0x01;
+	if (fpscr & FPSCR_ZX) result |= 0x04;
+	if (fpscr & FPSCR_OX) result |= 0x08;
+	if (fpscr & FPSCR_UX) result |= 0x10;
+	if (fpscr & FPSCR_XX) result |= 0x20;
+	return result;
+}
+
+unsigned int _clearfp(void)
+{
+	unsigned int status = _statusfp();
+
+	fpscr_set(fpscr_get() & ~(unsigned int)FPSCR_STICKY);
+	return status;
+}
 #else
 /* x87: glibc's floating-point environment holds the control and status
 words (fegetenv and fesetenv save and load the whole x87 environment, and

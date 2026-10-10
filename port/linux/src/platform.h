@@ -29,6 +29,11 @@ the SDK headers are read, exactly as game code sees them. */
 #include "halo_linux_winsock_names.h"
 #undef HALO_LINUX_WINSOCK_NAMES_UNDEFINE
 
+#ifdef __WIIU__
+/* the Wii U has no __thread: the layer's per-thread variables */
+#include "wiiu_thread_locals.h"
+#endif
+
 /* ---------- logging */
 
 /* prints "halo-linux: <message>" to stderr */
@@ -113,8 +118,18 @@ The Xbox maps physical memory at virtual 0x80000000 + P. The layer reserves
 that window at start-up and hands out page-granular blocks from it, so the
 physical/virtual arithmetic the game and Direct3D rely on keeps working. */
 
+#ifdef __WIIU__
+/* The Wii U gives a program no fixed addresses: the window is a block of its
+heap, as large as Android's and aligned to its size, so that the same
+arithmetic holds (port/wiiu/src/wiiu_memory.c) */
+extern unsigned long platform_contiguous_base;
+#define PLATFORM_CONTIGUOUS_BASE platform_contiguous_base
+#define PLATFORM_CONTIGUOUS_SIZE 0x08000000UL
+#else
 #define PLATFORM_CONTIGUOUS_BASE 0x80000000UL
-#ifdef HALO_ANDROID
+#endif
+#if defined(__WIIU__)
+#elif defined(HALO_ANDROID)
 /* 128 MB, a development kit's: Android's guest image is linked just above
 the window (port/android/include/halo_android_abi.h) */
 #define PLATFORM_CONTIGUOUS_SIZE 0x08000000UL

@@ -8,6 +8,12 @@ SDL_GL_GetProcAddress once the context exists (gl_functions_load).
 #ifndef __HALO_LINUX_GL_H
 #define __HALO_LINUX_GL_H
 
+/* OpenGL ES 3.2 instead of desktop OpenGL: Android's, and the Wii U's
+(port/wiiu/src/wiiu_gl.c, which draws it with the Wii U's GX2) */
+#if defined(HALO_ANDROID) || defined(__WIIU__)
+#define HALO_GLES 1
+#endif
+
 /* prototypes are declared only to give each pointer its exact type */
 #define GL_GLEXT_PROTOTYPES 1
 /* the XDK defines APIENTRY as __stdcall; OpenGL on Linux uses cdecl (on
@@ -16,7 +22,7 @@ Windows it is __stdcall too, and SDL would include windows.h without it) */
 #ifndef _WIN32
 #undef APIENTRY
 #endif
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 #include <GLES3/gl32.h>
 #include <GLES2/gl2ext.h>
 #define GLAPIENTRY GL_APIENTRY
@@ -25,7 +31,7 @@ Windows it is __stdcall too, and SDL would include windows.h without it) */
 #endif
 #pragma pop_macro("APIENTRY")
 
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 /* OpenGL ES 3.2 (port/android/README.md); tools/android_gl_stubs.py reads
 this list to generate the guest's entry points */
 /* ANDROID_GL_FUNCTIONS_BEGIN */
@@ -259,7 +265,7 @@ GL_FUNCTIONS(GL_DECLARE_FUNCTION)
 /* call sites use the ordinary names; gl_functions.c, which defines the
 pointers, sees the declarations without these aliases */
 #ifndef GL_FUNCTIONS_DEFINE
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 #define glGetString halo_glGetString
 #define glGetIntegerv halo_glGetIntegerv
 #define glCopyImageSubData halo_glCopyImageSubData

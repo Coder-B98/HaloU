@@ -14,6 +14,7 @@ builds' main thread has (a Wii U program's own is small).
 */
 
 #include <coreinit/debug.h>
+#include <coreinit/thread.h>
 #include <whb/log.h>
 #include <whb/log_cafe.h>
 #include <whb/log_udp.h>
@@ -32,6 +33,10 @@ int halo_xbox_main(void);
 
 static void *game_thread(void *result)
 {
+	/* GX2, the graphics, belongs to the core it was started on: the game's
+	thread stays on the main core (CPU 1), where the system expects it */
+	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
+	OSYieldThread();
 	*(int *)result = halo_xbox_main();
 	return NULL;
 }

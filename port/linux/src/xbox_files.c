@@ -426,6 +426,12 @@ static BOOL read_at(struct platform_file *file, LPVOID buffer, DWORD count, LPDW
 			memcpy((char *)buffer + total, staging, (size_t)result);
 		total += (DWORD)result;
 	}
+#ifdef __WIIU__
+	/* the Wii U cannot fault on the copy (wiiu_memory_watch.c): the read
+	itself marks the pages written */
+	if (bounce)
+		memory_watch_prepare_write(buffer, total);
+#endif
 	free(staging);
 	if (bytes_read)
 		*bytes_read = total;

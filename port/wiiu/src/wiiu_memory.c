@@ -59,16 +59,6 @@ void *halo_custom_edition_tag_cache(void)
 	return NULL;
 }
 
-void halo_custom_edition_texels_channels(const void *texels, unsigned char channel_order)
-{
-	(void)texels;
-	(void)channel_order;
-}
-
-void halo_custom_edition_texels_forget(void)
-{
-}
-
 BOOL platform_is_contiguous(const void *address)
 {
 	unsigned long value = (unsigned long)address;
@@ -146,6 +136,7 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 	address = (void *)(platform_contiguous_base + first * PAGE_SIZE_BYTES);
 	/* (fresh pages are zeroed, as the Xbox's are) */
 	memset(address, 0, count * PAGE_SIZE_BYTES);
+	memory_watch_forget(address, count * PAGE_SIZE_BYTES);
 	for (page = first; page < first + count; page++)
 		page_protection[page] = protect;
 	block_page_count[first] = count;
@@ -164,6 +155,7 @@ void platform_contiguous_free(void *address)
 	count = block_page_count[first];
 	if (count)
 	{
+		memory_watch_forget(address, count * PAGE_SIZE_BYTES);
 		for (page = first; page < first + count; page++)
 			page_protection[page] = 0;
 		block_page_count[first] = 0;

@@ -57,10 +57,21 @@ LINUX_PLATFORM_UNITS = [
     "xbox_kernel.c",
     "xbox_texture_layout.c",
     "xbox_xapi.c",
+    # the renderer: OpenGL ES, which port/wiiu/src/wiiu_gl.c makes of GX2
+    "d3d8_gl.c",
+    "nv2a_psh.c",
+    "nv2a_vsh.c",
+    "xbox_textures.c",
+    "xgpu_text.c",
 ]
 
 # the Wii U's units that are not the Xbox's platform layer, built without it
-WIIU_STARTUP_UNITS = ["wiiu_main.c"]
+WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c"]
+
+# the extra flags of some of those: the GL shim reads the Linux layer's gl.h
+# (its list of functions) and the Khronos headers that came with CafeGLSL
+STARTUP_EXTRA = {"wiiu_gl.c": ["-iquote", "port/linux/src", "-Iport/wiiu/include/khronos",
+                               f"-isystem{DEVKITPRO}/portlibs/wiiu/include"]}
 
 # the Linux build's flags with no meaning for gcc or the Wii U
 DROP = {
@@ -126,15 +137,15 @@ def main() -> int:
         elif source.startswith("port/linux/src/") and Path(source).name in LINUX_PLATFORM_UNITS:
             source, flags = wiiu_flags(command)
             # (the platform layer's own Wii U headers ahead of the Linux layer's)
-            units.append((source, ["-Iport/wiiu/src", "-Iport/wiiu/include"] + flags))
+            units.append((source, ["-Iport/wiiu/src", "-Iport/wiiu/include", "-Iport/wiiu/include/khronos"] + flags))
     # the Wii U's own platform units, as the Linux layer's are built
     platform = next(wiiu_flags(c)[1] for c in commands if " -c port/linux/src/xbox_kernel.c " in c)
     for source in sorted((WIIU_DIR / "src").glob("*.c")):
         if source.name in WIIU_STARTUP_UNITS:
             # (the Wii U's own C, with wut's headers, not the Xbox's)
-            units.append((str(source), WIIU_FLAGS + ["-O2", "-Wall"]))
+            units.append((str(source), WIIU_FLAGS + ["-O2", "-Wall"] + STARTUP_EXTRA.get(source.name, [])))
         else:
-            units.append((str(source), ["-Iport/wiiu/src", "-Iport/wiiu/include"] + platform))
+            units.append((str(source), ["-Iport/wiiu/src", "-Iport/wiiu/include", "-Iport/wiiu/include/khronos"] + platform))
 
     with open(BUILD / "build.ninja", "w") as file:
         n = Writer(file)
@@ -143,7 +154,7 @@ def main() -> int:
         n.rule("cc", f"$cc -MMD -MF $out.d $flags -c $in -o $out", depfile="$out.d", deps="gcc",
                description="WIIU CC $out")
         n.rule("link", f"DEVKITPRO={DEVKITPRO} $link {' '.join(MACHDEP)} -g -specs={WUT}/share/wut.specs -Wl,-Map,$out.map"
-               f" -o $out @$out.rsp -L{WUT}/lib -lwut -lm",
+               f" -o $out @$out.rsp -L{DEVKITPRO}/portlibs/wiiu/lib -L{WUT}/lib -lcafeglsl -lstdc++ -lwut -lm",
                rspfile="$out.rsp", rspfile_content="$in_newline", description="WIIU LINK $out")
         # (clang marks each object's stack not executable in a .note.GNU-stack
         # section, which elf2rpl has no place for; the Wii U's never is)

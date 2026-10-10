@@ -29,6 +29,12 @@ structure bsp material's vertices (in its compressed vertex data, and the
 buffers the bsp's header lists). Each is turned around as its part or
 material is, by its vertex type's layout (swap_geometry), a vertex or index
 at a time, so that buffers parts share are turned around once.
+
+An animation's frames are bytes of their own layout too (swap_animation):
+each frame, node by node, a rotation (four shorts), a translation (three
+reals) and a scale (a real) for each node its flags say moves; its default
+data the same for the nodes that don't; a compressed animation's header,
+node headers, frame indices, defaults and keyframes; its frame info, reals.
 */
 
 /* ---------- headers */
@@ -37,6 +43,7 @@ at a time, so that buffers parts share are turned around once.
 #include "tag_schema.h"
 #include "tag_byte_swap.h"
 #include "rasterizer/rasterizer_geometry.h"
+#include "models/model_animation_definitions.h"
 #include "structures/structure_bsp_definitions.h"
 
 #include <stdarg.h>
@@ -522,6 +529,8 @@ static void geometry_report(char const *what, char const *name)
 	return;
 }
 
+static void swap_animation(struct swap_region *region, struct animation *animation);
+
 /* a model part's vertices and indices, or a structure bsp material's
 vertices, as the part or material is turned around (its counts and types
 now this machine's) */
@@ -529,7 +538,9 @@ static void swap_geometry(struct swap_region *region, byte *base, struct tag_sch
 {
 	if (!definition->type_name)
 		return;
-	if (!strcmp(definition->type_name, "struct model_geometry_part"))
+	if (!strcmp(definition->type_name, "struct animation"))
+		swap_animation(region, (struct animation *)base);
+	else if (!strcmp(definition->type_name, "struct model_geometry_part"))
 	{
 		struct swap_model_geometry_part *part = (struct swap_model_geometry_part *)base;
 		struct triangle_buffer const *triangles = &part->triangle_buffer;
@@ -608,6 +619,223 @@ static void swap_geometry(struct swap_region *region, byte *base, struct tag_sch
 				geometry_report("structure_material", "lightmap vertices");
 		}
 	}
+
+	return;
+}
+
+/* animations */
+
+enum
+{
+	/* model_animations.c: a compressed animation's header (its offsets, up to
+	its rotation node headers), and a node header's keyframe count bits (the
+	first keyframe's index is above them) */
+	COMPRESSED_ANIMATION_HEADER_LONGS = 11,
+	KEYFRAME_COUNT_BITS = 12,
+	/* a rotation: an uncompressed frame's (four shorts) and a compressed
+	animation's (three) */
+	ROTATION_SHORTS = 4,
+	COMPRESSED_ROTATION_SHORTS = 3,
+	TRANSLATION_REALS = 3,
+};
+
+/* count integers of size bytes at offset in the bytes from data to end,
+each turned around unless it already was. FALSE if they are not all there */
+static boolean swap_array(struct swap_region *region, byte *data, byte *end, long offset, long count, short size)
+{
+	byte *first = data + offset;
+	long index;
+
+	if (count <= 0)
+		return TRUE;
+	if (offset < 0 || offset > end - data || count > (end - first) / size ||
+		!region_contains(region, first, (unsigned long)(count * size)))
+		return FALSE;
+	for (index = 0; index < count; index++)
+	{
+		if (mark(region, first + index * size, (unsigned long)size))
+			swap_run(first + index * size, size, 1);
+	}
+
+	return TRUE;
+}
+
+/* whether the animation moves the node one way (its flags of that kind) */
+static boolean node_flag(unsigned long const *flags, short node_index)
+{
+	return BIT_VECTOR_TEST_FLAG(flags, node_index) != 0;
+}
+
+/* a frame's (or the defaults') rotations, translations and scales, node by
+node: those the flags name (want TRUE), or those they don't (FALSE). The
+bytes it took, or NONE if they are not all there */
+static long swap_animation_nodes(struct swap_region *region, struct animation const *animation, byte *data,
+	byte *end, boolean want)
+{
+	byte *at = data;
+	short node_index;
+
+	for (node_index = 0; node_index < animation->node_count; node_index++)
+	{
+		if (node_flag(animation->nodes_with_rotation_flags, node_index) == want)
+		{
+			if (!swap_array(region, at, end, 0, ROTATION_SHORTS, 2))
+				return NONE;
+			at += ROTATION_SHORTS * 2;
+		}
+		if (node_flag(animation->nodes_with_translation_flags, node_index) == want)
+		{
+			if (!swap_array(region, at, end, 0, TRANSLATION_REALS, 4))
+				return NONE;
+			at += TRANSLATION_REALS * 4;
+		}
+		if (node_flag((unsigned long const *)animation->nodes_with_scale_flags, node_index) == want)
+		{
+			if (!swap_array(region, at, end, 0, 1, 4))
+				return NONE;
+			at += 4;
+		}
+	}
+
+	return (long)(at - data);
+}
+
+/* a compressed animation's node headers (count of them at offset), turned
+around, and how many keyframes they name (the most any reaches) */
+static long swap_node_headers(struct swap_region *region, byte *data, byte *end, long offset, long count)
+{
+	long keyframe_total = 0;
+	long index;
+
+	if (!swap_array(region, data, end, offset, count, 4))
+		return 0;
+	for (index = 0; index < count; index++)
+	{
+		unsigned long header;
+		long reach;
+
+		memcpy(&header, data + offset + index * 4, 4);
+		reach = (long)(header >> KEYFRAME_COUNT_BITS) + (long)(header & (FLAG(KEYFRAME_COUNT_BITS) - 1));
+		if (reach > keyframe_total)
+			keyframe_total = reach;
+	}
+
+	return keyframe_total;
+}
+
+/* a compressed animation's data, from its header at data (end is its data's
+end): FALSE if a part of it is not there */
+static boolean swap_compressed_animation(struct swap_region *region, struct animation const *animation, byte *data,
+	byte *end, long rotation_count, long translation_count, long scale_count)
+{
+	long offsets[COMPRESSED_ANIMATION_HEADER_LONGS];
+	long rotation_keyframes;
+	long translation_keyframes;
+	long scale_keyframes;
+	boolean ok;
+
+	if (!swap_array(region, data, end, 0, COMPRESSED_ANIMATION_HEADER_LONGS, 4))
+		return FALSE;
+	memcpy(offsets, data, sizeof(offsets));
+	/* (the header's offsets, in its order: rotations' frame indices,
+	defaults, keyframes; translations' node headers, frame indices,
+	defaults, keyframes; scales' the same) */
+	rotation_keyframes = swap_node_headers(region, data, end, COMPRESSED_ANIMATION_HEADER_LONGS * 4, rotation_count);
+	translation_keyframes = swap_node_headers(region, data, end, offsets[3], translation_count);
+	scale_keyframes = swap_node_headers(region, data, end, offsets[7], scale_count);
+	ok = swap_array(region, data, end, offsets[0], rotation_keyframes, 2);
+	ok = swap_array(region, data, end, offsets[1], animation->node_count * COMPRESSED_ROTATION_SHORTS, 2) && ok;
+	ok = swap_array(region, data, end, offsets[2], rotation_keyframes * COMPRESSED_ROTATION_SHORTS, 2) && ok;
+	ok = swap_array(region, data, end, offsets[4], translation_keyframes, 2) && ok;
+	ok = swap_array(region, data, end, offsets[5], animation->node_count * TRANSLATION_REALS, 4) && ok;
+	ok = swap_array(region, data, end, offsets[6], translation_keyframes * TRANSLATION_REALS, 4) && ok;
+	ok = swap_array(region, data, end, offsets[8], scale_keyframes, 2) && ok;
+	ok = swap_array(region, data, end, offsets[9], scale_count, 4) && ok;
+	ok = swap_array(region, data, end, offsets[10], scale_keyframes, 4) && ok;
+
+	return ok;
+}
+
+static long node_flag_count(unsigned long const *flags, short node_count)
+{
+	long count = 0;
+	short node_index;
+
+	for (node_index = 0; node_index < node_count; node_index++)
+		count += node_flag(flags, node_index);
+
+	return count;
+}
+
+/* an animation's frames, defaults and frame info, as it is turned around
+(its counts and flags now this machine's) */
+static void swap_animation(struct swap_region *region, struct animation *animation)
+{
+	byte *data = animation->data.address;
+	long data_size = animation->data.size;
+	byte *end;
+	long uncompressed_size;
+	long frame_index;
+	boolean ok = TRUE;
+
+	if (animation->node_count < 0 || animation->node_count > MAXIMUM_NODES_PER_ANIMATION)
+		return;
+	if (data && data_size > 0 && region_contains(region, data, (unsigned long)data_size))
+	{
+		end = data + data_size;
+		uncompressed_size = data_size;
+		if (TEST_FLAG(animation->flags, _animation_compressed_bit))
+		{
+			long rotation_count = node_flag_count(animation->nodes_with_rotation_flags, animation->node_count);
+			long translation_count = node_flag_count(animation->nodes_with_translation_flags, animation->node_count);
+			long scale_count = node_flag_count((unsigned long const *)animation->nodes_with_scale_flags,
+				animation->node_count);
+
+			if (animation->compressed_data_offset >= 0 && animation->compressed_data_offset < data_size)
+			{
+				ok = swap_compressed_animation(region, animation, data + animation->compressed_data_offset, end,
+					rotation_count, translation_count, scale_count);
+				uncompressed_size = animation->compressed_data_offset;
+			}
+			else
+			{
+				ok = FALSE;
+			}
+		}
+		/* (the uncompressed frames, before any compressed data) */
+		if (animation->frame_size > 0)
+		{
+			for (frame_index = 0; frame_index < animation->frame_count &&
+				(frame_index + 1) * animation->frame_size <= uncompressed_size; frame_index++)
+			{
+				byte *frame = data + frame_index * animation->frame_size;
+
+				if (swap_animation_nodes(region, animation, frame, frame + animation->frame_size, TRUE) !=
+					animation->frame_size)
+				{
+					ok = FALSE;
+					break;
+				}
+			}
+		}
+	}
+	if (animation->default_data.address && animation->default_data.size > 0 &&
+		region_contains(region, animation->default_data.address, (unsigned long)animation->default_data.size))
+	{
+		byte *defaults = animation->default_data.address;
+
+		if (swap_animation_nodes(region, animation, defaults, defaults + animation->default_data.size, FALSE) == NONE)
+			ok = FALSE;
+	}
+	if (animation->frame_info.address && animation->frame_info.size > 0)
+	{
+		byte *info = animation->frame_info.address;
+
+		if (!swap_array(region, info, info + animation->frame_info.size, 0, animation->frame_info.size / 4, 4))
+			ok = FALSE;
+	}
+	if (!ok)
+		report("tag_byte_swap: animation '%.31s''s data is not all where it says: some left as read", animation->name);
 
 	return;
 }

@@ -1093,6 +1093,17 @@ struct _FILETIME {
 };
 
 union _LARGE_INTEGER {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    /* big-endian (the Wii U): the high half of QuadPart comes first */
+    struct {
+        long HighPart;
+        unsigned long LowPart;
+    };
+    struct {
+        long HighPart;
+        unsigned long LowPart;
+    } u;
+#else
     struct {
         unsigned long LowPart;
         long HighPart;
@@ -1101,6 +1112,7 @@ union _LARGE_INTEGER {
         unsigned long LowPart;
         long HighPart;
     } u;
+#endif
     __int64 QuadPart;
 };
 
@@ -1169,6 +1181,17 @@ struct _SYSTEMTIME {
 };
 
 union _ULARGE_INTEGER {
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    /* big-endian (the Wii U): the high half of QuadPart comes first */
+    struct {
+        unsigned long HighPart;
+        unsigned long LowPart;
+    };
+    struct {
+        unsigned long HighPart;
+        unsigned long LowPart;
+    } u;
+#else
     struct {
         unsigned long LowPart;
         unsigned long HighPart;
@@ -1177,6 +1200,7 @@ union _ULARGE_INTEGER {
         unsigned long LowPart;
         unsigned long HighPart;
     } u;
+#endif
     unsigned __int64 QuadPart;
 };
 

@@ -35,6 +35,11 @@ each frame, node by node, a rotation (four shorts), a translation (three
 reals) and a scale (a real) for each node its flags say moves; its default
 data the same for the nodes that don't; a compressed animation's header,
 node headers, frame indices, defaults and keyframes; its frame info, reals.
+
+So are the scenario's compiled scripts (swap_scripts): a data array's header,
+then its syntax nodes, whose last field holds a constant of the node's own
+type (a byte, a short or a long, by hs.c's hs_type_sizes) or a node or global
+index. Their strings are text, left as they are.
 */
 
 /* ---------- headers */
@@ -43,7 +48,11 @@ node headers, frame indices, defaults and keyframes; its frame info, reals.
 #include "tag_schema.h"
 #include "tag_byte_swap.h"
 #include "rasterizer/rasterizer_geometry.h"
+#include "hs/hs.h"
+#include "hs/hs_scenario_definitions.h"
+#include "memory/data.h"
 #include "models/model_animation_definitions.h"
+#include "scenario/scenario_definitions.h"
 #include "structures/structure_bsp_definitions.h"
 
 #include <stdarg.h>
@@ -530,6 +539,7 @@ static void geometry_report(char const *what, char const *name)
 }
 
 static void swap_animation(struct swap_region *region, struct animation *animation);
+static void swap_scripts(struct swap_region *region, struct scenario *scenario);
 
 /* a model part's vertices and indices, or a structure bsp material's
 vertices, as the part or material is turned around (its counts and types
@@ -538,7 +548,9 @@ static void swap_geometry(struct swap_region *region, byte *base, struct tag_sch
 {
 	if (!definition->type_name)
 		return;
-	if (!strcmp(definition->type_name, "struct animation"))
+	if (!strcmp(definition->type_name, "struct scenario"))
+		swap_scripts(region, (struct scenario *)base);
+	else if (!strcmp(definition->type_name, "struct animation"))
 		swap_animation(region, (struct animation *)base);
 	else if (!strcmp(definition->type_name, "struct model_geometry_part"))
 	{
@@ -836,6 +848,81 @@ static void swap_animation(struct swap_region *region, struct animation *animati
 	}
 	if (!ok)
 		report("tag_byte_swap: animation '%.31s''s data is not all where it says: some left as read", animation->name);
+
+	return;
+}
+
+/* scripts */
+
+enum
+{
+	/* hs_runtime.c's syntax node flags */
+	HS_NODE_PRIMITIVE_BIT = 0,
+	HS_NODE_GLOBAL_BIT = 2,
+};
+
+/* hs.c's hs_type_sizes: the bytes a value of each type takes (0: none, or
+the parser's own kinds) */
+static short const script_type_sizes[] =
+{
+	0, 0, 0, 0, 0, 1, 4, 2, 4, 4, 4, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 4, 4,
+	4, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 2, 2
+};
+
+typedef char verify_script_type_sizes[NUMBEROF(script_type_sizes) == NUMBER_OF_HS_TYPES ? 1 : -1];
+typedef char verify_hs_syntax_node_size[sizeof(struct hs_syntax_node) == 0x14 ? 1 : -1];
+typedef char verify_data_array_size[sizeof(struct data_array) == 0x38 ? 1 : -1];
+
+/* the scenario's compiled scripts (its syntax data), and its script strings
+marked as done (they are text) */
+static void swap_scripts(struct swap_region *region, struct scenario *scenario)
+{
+	struct data_array *nodes = scenario->hs_syntax_data.address;
+	long size = scenario->hs_syntax_data.size;
+	struct hs_syntax_node *node_data;
+	long count;
+	long index;
+
+	if (scenario->hs_string_constants.address && scenario->hs_string_constants.size > 0 &&
+		region_contains(region, scenario->hs_string_constants.address,
+			(unsigned long)scenario->hs_string_constants.size))
+	{
+		mark(region, scenario->hs_string_constants.address, (unsigned long)scenario->hs_string_constants.size);
+	}
+	if (!nodes || size < (long)sizeof(*nodes) || !region_contains(region, nodes, (unsigned long)size) ||
+		!mark(region, nodes, (unsigned long)size))
+	{
+		return;
+	}
+
+	/* the array's header: its name is text, the rest integers (its data
+	pointer the game sets as it loads) */
+	swap_run((byte *)&nodes->maximum_count, 2, 2);
+	swap_run((byte *)&nodes->signature, 4, 1);
+	swap_run((byte *)&nodes->first_free_absolute_index, 2, 4);
+	swap_run((byte *)&nodes->data, 4, 1);
+
+	/* every node its bytes hold (those not in use are zeros either way) */
+	node_data = (struct hs_syntax_node *)(nodes + 1);
+	count = (size - (long)sizeof(*nodes)) / (long)sizeof(*node_data);
+	for (index = 0; index < count; index++)
+	{
+		struct hs_syntax_node *node = &node_data[index];
+		short value_size = 4;
+
+		swap_run((byte *)node, 2, 4);
+		swap_run((byte *)&node->next_node_index, 4, 2);
+		/* (a constant is the size of its type, at the start of the field, as
+		the runtime reads it through its value union; a global's index, or
+		the first node of a call, is a long) */
+		if (TEST_FLAG(node->flags, HS_NODE_PRIMITIVE_BIT) && !TEST_FLAG(node->flags, HS_NODE_GLOBAL_BIT) &&
+			node->constant_type >= 0 && node->constant_type < NUMBER_OF_HS_TYPES)
+		{
+			value_size = script_type_sizes[node->constant_type];
+		}
+		if (value_size == 2 || value_size == 4)
+			swap_run((byte *)&node->data, value_size, 1);
+	}
 
 	return;
 }

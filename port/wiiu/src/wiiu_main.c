@@ -14,6 +14,7 @@ builds' main thread has (a Wii U program's own is small).
 */
 
 #include <coreinit/debug.h>
+#include <coreinit/exception.h>
 #include <coreinit/thread.h>
 #include <whb/log.h>
 #include <whb/log_cafe.h>
@@ -30,6 +31,38 @@ builds' main thread has (a Wii U program's own is small).
 #define GAME_STACK_SIZE (8 * 1024 * 1024)
 
 int halo_xbox_main(void);
+
+/* ---------- when something goes wrong: a last line in the log
+
+A crash on the Wii U (or in Cemu) leaves nothing behind but the log, so the
+ways a program can die each write where it was first. */
+
+/* abort() (a failed check, or a C++ exception nobody caught), in place of
+newlib's */
+void abort(void)
+{
+	fprintf(stderr, "Halo U: abort() called from %p\n", __builtin_return_address(0));
+	OSFatal("Halo U: abort() called. See sd:/halou/halou.log");
+	for (;;)
+		;
+}
+
+static void exit_said(void)
+{
+	fprintf(stderr, "Halo U: exit() called\n");
+}
+
+static BOOL crashed(const char *what, OSContext *context)
+{
+	fprintf(stderr, "Halo U: %s exception at %08x (called from %08x), address %08x\n", what,
+		(unsigned)context->srr0, (unsigned)context->lr, (unsigned)context->dar);
+	OSFatal("Halo U crashed. See sd:/halou/halou.log");
+	return FALSE;
+}
+
+static BOOL crashed_dsi(OSContext *context) { return crashed("memory (DSI)", context); }
+static BOOL crashed_isi(OSContext *context) { return crashed("code (ISI)", context); }
+static BOOL crashed_program(OSContext *context) { return crashed("program", context); }
 
 static void *game_thread(void *result)
 {
@@ -61,6 +94,11 @@ int main(int argc, char **argv)
 		WHBLogPrint("Halo U: cannot write " LOG_PATH);
 	fprintf(stderr, "Halo U: starting, data in " DATA_ROOT "\n");
 	WHBLogPrint("Halo U: starting, data in " DATA_ROOT);
+
+	atexit(exit_said);
+	OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_DSI, crashed_dsi);
+	OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_ISI, crashed_isi);
+	OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_PROGRAM, crashed_program);
 
 	setenv("HALO_DATA_ROOT", DATA_ROOT, 1);
 	if (chdir(DATA_ROOT) != 0)

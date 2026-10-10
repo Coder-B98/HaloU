@@ -830,12 +830,16 @@ static int internal_program_make(struct internal_program *program, const char *v
 {
 	char log[1024];
 
+	platform_log("GX2: compiling the %s program", what);
+	log[0] = 0;
 	if (CompileShaderPair(vertex_source, pixel_source, GLSL_COMPILE_REGISTER, &program->vertex, &program->pixel,
 		log, sizeof(log), GLSL_COMPILER_FLAG_NONE) == GLSL_SHADER_MODE_ERROR)
 	{
 		platform_log("GX2: cannot compile the %s program: %s", what, log);
 		return 0;
 	}
+	platform_log("GX2: compiled the %s program (%u + %u bytes)", what, (unsigned)program->vertex->size,
+		(unsigned)program->pixel->size);
 	GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, program->vertex->program, program->vertex->size);
 	GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, program->pixel->program, program->pixel->size);
 	program->rectangle = uniform_offset(program->vertex->uniformVars, program->vertex->uniformVarCount, "rectangle");
@@ -3164,11 +3168,13 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 	(void)height;
 	if (video_ready)
 		return 1;
+	platform_log("GX2: starting");
 	if (!WHBGfxInit())
 	{
 		platform_log("GX2: WHBGfxInit failed");
 		return 0;
 	}
+	platform_log("GX2: WHBGfxInit done");
 	/* a context of our own: WHBGfx's are for its own drawing */
 	context_state = gpu_alloc(GX2_CONTEXT_STATE_ALIGNMENT, sizeof(GX2ContextState));
 	if (!context_state)
@@ -3228,6 +3234,7 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 	for (unit = 0; unit < ATTRIBUTE_COUNT; unit++)
 		gl.attributes[unit].value[3] = 1.0f;
 
+	platform_log("GX2: screen and context set up");
 	InitGLSLCompiler();
 	platform_log("GX2: shader compiler %s", GetGLSLCompilerVersion());
 	internal_programs_initialize();

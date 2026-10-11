@@ -56,6 +56,8 @@ CPU core: GX2 must be called from the core it was started on.
 #include <gx2/utils.h>
 #include <whb/gfx.h>
 #include <cafeglsl/CafeGLSLCompiler.h>
+#include <coreinit/memexpheap.h>
+#include <coreinit/memheap.h>
 
 #include <ctype.h>
 #include <malloc.h>
@@ -825,11 +827,23 @@ static int fetch_shader_make(GX2FetchShader *fetch, GX2AttribStream *streams, un
 	return 1;
 }
 
+/* the free memory, in the log: the shader compiler is large, and running
+out inside it would look like a crash with no message */
+static void log_free_memory(const char *when)
+{
+	MEMHeapHandle heap = MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM2);
+
+	platform_log("GX2: memory %s: %lu KB free, largest block %lu KB", when,
+		(unsigned long)MEMGetTotalFreeSizeForExpHeap(heap) / 1024,
+		(unsigned long)MEMGetAllocatableSizeForExpHeapEx(heap, 4) / 1024);
+}
+
 static int internal_program_make(struct internal_program *program, const char *vertex_source,
 	const char *pixel_source, const char *what)
 {
 	char log[1024];
 
+	log_free_memory("before compiling");
 	platform_log("GX2: compiling the %s program", what);
 	log[0] = 0;
 	if (CompileShaderPair(vertex_source, pixel_source, GLSL_COMPILE_REGISTER, &program->vertex, &program->pixel,
@@ -3235,6 +3249,7 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 		gl.attributes[unit].value[3] = 1.0f;
 
 	platform_log("GX2: screen and context set up");
+	log_free_memory("before the shader compiler starts");
 	InitGLSLCompiler();
 	platform_log("GX2: shader compiler %s", GetGLSLCompilerVersion());
 	internal_programs_initialize();

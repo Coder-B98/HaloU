@@ -68,3 +68,4 @@ Statuses: VERIFIED, INFERRED, OUTDATED (true before, not now), WITHDRAWN
 - T-002 CafeGLSL crash, time-boxed, then T-003 precompiled shaders
 - T-004 first-picture fixes
 - T-005 input and the save fix
+- [C3] r11 (96fa346): sound plays (VERIFIED, Benjamin's recording and "AX: sound on" in audit\2026-10-11-r11\halou.log). Text drew as solid blocks: rasterizer_text.c stored its 16-bit texels big-endian, the renderer reads them low byte first. Campaign/Settings crashed at terminal.c:352: a char * used as va_list, which va_start on PowerPC writes through. VERIFIED from the Cemu crash report; both fixed in a9eb234, r12 to confirm. D-pad: Cemu's input mapping points the D-pad at stick axes [INFERRED from controller0.xml].

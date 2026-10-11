@@ -66,7 +66,7 @@ LINUX_PLATFORM_UNITS = [
 ]
 
 # the Wii U's units that are not the Xbox's platform layer, built without it
-WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c"]
+WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c", "wiiu_alloc.c"]
 
 # the extra flags of some of those: the GL shim reads the Linux layer's gl.h
 # (its list of functions) and the Khronos headers that came with CafeGLSL
@@ -171,6 +171,8 @@ def main() -> int:
         n.rule("cc", f"$cc -MMD -MF $out.d $flags -c $in -o $out", depfile="$out.d", deps="gcc",
                description="WIIU CC $out")
         n.rule("link", f"DEVKITPRO={DEVKITPRO} $link {' '.join(MACHDEP)} -g -specs={WUT}/share/wut.specs -Wl,-Map,$out.map"
+               # (a line in the log for each allocation that fails: port/wiiu/src/wiiu_alloc.c)
+               " -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign"
                f" -o $out @$out.rsp -L{DEVKITPRO}/portlibs/wiiu/lib -L{WUT}/lib -lcafeglsl -lstdc++ -lwut -lm",
                rspfile="$out.rsp", rspfile_content="$in_newline", description="WIIU LINK $out")
         # (clang marks each object's stack not executable in a .note.GNU-stack

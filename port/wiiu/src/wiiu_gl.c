@@ -56,8 +56,7 @@ CPU core: GX2 must be called from the core it was started on.
 #include <gx2/utils.h>
 #include <whb/gfx.h>
 #include <cafeglsl/CafeGLSLCompiler.h>
-#include <coreinit/memexpheap.h>
-#include <coreinit/memheap.h>
+#include <coreinit/thread.h>
 
 #include <ctype.h>
 #include <malloc.h>
@@ -828,14 +827,59 @@ static int fetch_shader_make(GX2FetchShader *fetch, GX2AttribStream *streams, un
 }
 
 /* the free memory, in the log: the shader compiler is large, and running
-out inside it would look like a crash with no message */
+out inside it would look like a crash with no message. (wut gives newlib's
+malloc all of the system's heap at start-up, so the system's own count of
+free memory reads 0: newlib's is the one that counts.) The largest block is
+found by asking for less and less, each block given back at once. */
+void wiiu_alloc_quiet(int quiet);
+
 static void log_free_memory(const char *when)
 {
-	MEMHeapHandle heap = MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM2);
+	struct mallinfo info = mallinfo();
+	unsigned long low = 0, high = 1024UL * 1024 * 1024;
 
-	platform_log("GX2: memory %s: %lu KB free, largest block %lu KB", when,
-		(unsigned long)MEMGetTotalFreeSizeForExpHeap(heap) / 1024,
-		(unsigned long)MEMGetAllocatableSizeForExpHeapEx(heap, 4) / 1024);
+	wiiu_alloc_quiet(1);
+	while (high - low > 64 * 1024)
+	{
+		unsigned long middle = low + (high - low) / 2;
+		void *block = malloc(middle);
+
+		if (block)
+		{
+			free(block);
+			low = middle;
+		}
+		else
+			high = middle;
+	}
+	wiiu_alloc_quiet(0);
+	platform_log("GX2: memory %s: heap %lu KB, %lu KB in use, %lu KB free in it; largest block now %lu KB",
+		when, (unsigned long)info.arena / 1024, (unsigned long)info.uordblks / 1024,
+		(unsigned long)info.fordblks / 1024, low / 1024);
+}
+
+/* the stack of the thread that asks for a compile: the compiler goes deep */
+static void log_stack(const char *when)
+{
+	OSThread *thread = OSGetCurrentThread();
+	char here;
+
+	platform_log("GX2: stack %s: thread %p (%s), %lu KB left of %lu KB", when, (void *)thread,
+		OSGetThreadName(thread) ? OSGetThreadName(thread) : "no name",
+		(unsigned long)((char *)&here - (char *)thread->stackEnd) / 1024,
+		(unsigned long)((char *)thread->stackStart - (char *)thread->stackEnd) / 1024);
+}
+
+/* the shader compiler, started once, by the first to need it */
+static void compiler_start(void)
+{
+	static int started;
+
+	if (started)
+		return;
+	started = 1;
+	InitGLSLCompiler();
+	platform_log("GX2: shader compiler %s", GetGLSLCompilerVersion());
 }
 
 static int internal_program_make(struct internal_program *program, const char *vertex_source,
@@ -844,6 +888,7 @@ static int internal_program_make(struct internal_program *program, const char *v
 	char log[1024];
 
 	log_free_memory("before compiling");
+	log_stack("before compiling");
 	platform_log("GX2: compiling the %s program", what);
 	log[0] = 0;
 	if (CompileShaderPair(vertex_source, pixel_source, GLSL_COMPILE_REGISTER, &program->vertex, &program->pixel,
@@ -868,6 +913,32 @@ static void internal_programs_initialize(void)
 {
 	internal_ready = internal_program_make(&clear_program, internal_vertex_clear, internal_pixel_clear, "clear") &&
 		internal_program_make(&blit_program, internal_vertex_blit, internal_pixel_blit, "blit");
+}
+
+/* T-002: the clear program compiled and thrown away, from wherever the
+caller is (wiiu_main.c asks at the start, and again on the game's thread
+before the game starts), so the log says whether the compiler fails
+everywhere in this program or only once the game is running */
+void wiiu_gl_compiler_test(const char *when)
+{
+	GX2VertexShader *vertex = NULL;
+	GX2PixelShader *pixel = NULL;
+	char log[1024];
+
+	log_free_memory(when);
+	log_stack(when);
+	compiler_start();
+	platform_log("GX2: test compile %s", when);
+	log[0] = 0;
+	if (CompileShaderPair(internal_vertex_clear, internal_pixel_clear, GLSL_COMPILE_REGISTER, &vertex, &pixel,
+		log, sizeof(log), GLSL_COMPILER_FLAG_NONE) == GLSL_SHADER_MODE_ERROR)
+	{
+		platform_log("GX2: test compile %s failed: %s", when, log);
+		return;
+	}
+	platform_log("GX2: test compile %s worked (%u + %u bytes)", when, (unsigned)vertex->size,
+		(unsigned)pixel->size);
+	FreeShaders(vertex, pixel);
 }
 
 /* ---------- framebuffers: what a draw draws into */
@@ -3250,8 +3321,7 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 
 	platform_log("GX2: screen and context set up");
 	log_free_memory("before the shader compiler starts");
-	InitGLSLCompiler();
-	platform_log("GX2: shader compiler %s", GetGLSLCompilerVersion());
+	compiler_start();
 	internal_programs_initialize();
 	video_ready = 1;
 	platform_log("GX2: ready, drawing at %dx%d", SCREEN_WIDTH, SCREEN_HEIGHT);

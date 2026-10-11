@@ -35,6 +35,7 @@ builds' main thread has (a Wii U program's own is small).
 #define GAME_STACK_SIZE (8 * 1024 * 1024)
 
 int halo_xbox_main(void);
+void wiiu_gl_compiler_test(const char *when);
 
 /* ---------- the time in the log
 
@@ -106,6 +107,8 @@ static void *game_thread(void *result)
 	thread stays on the main core (CPU 1), where the system expects it */
 	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
 	OSYieldThread();
+	/* T-002: the shader compiler, tried on this thread before the game runs */
+	wiiu_gl_compiler_test("on the game's thread, before the game");
 	*(int *)result = halo_xbox_main();
 	return NULL;
 }
@@ -139,6 +142,9 @@ int main(int argc, char **argv)
 	OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_DSI, crashed_dsi);
 	OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_ISI, crashed_isi);
 	OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_PROGRAM, crashed_program);
+
+	/* T-002: the shader compiler, tried before anything of the game's */
+	wiiu_gl_compiler_test("at the start");
 
 	setenv("HALO_DATA_ROOT", DATA_ROOT, 1);
 	if (chdir(DATA_ROOT) != 0)

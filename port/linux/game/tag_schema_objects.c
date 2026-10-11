@@ -157,7 +157,20 @@ struct vehicle_definition
 	real unknown344;
 	byte unused348[0x1c];
 	real unknown364;
-	byte unknown368[0x48];
+	byte unknown368[0x18];
+	/* the AI's driving (actor_moving.c, actors.c, actions.c, action_fight.c) */
+	real ai_sideslip_distance;
+	real ai_destination_radius;
+	real ai_avoidance_distance;
+	real ai_pathfinding_radius;
+	real ai_charge_repeat_time;
+	real ai_strafing_stop_range;
+	real ai_oversteer_angle_lower_bound;
+	real ai_oversteer_angle_upper_bound;
+	real ai_steering_max_angle;
+	real ai_steering_max_throttle;
+	real minimum_firing_position_time;
+	byte unknown3AC[4];
 	struct tag_reference suspension_sound;
 	struct tag_reference crash_sound;
 	struct tag_reference material_effects;

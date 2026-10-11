@@ -241,19 +241,19 @@ static struct tag_swap_run const struct_shader_layer_runs[] = {{0, 4, 1}, {4, 5,
 static struct tag_swap_run const struct_shader_model_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {56, 4, 1}, {76, 2, 1}, {108, 2, 4}, {116, 4, 7}, {156, 4, 3}, {168, 5, 1}, {172, 4, 2}, {188, 4, 1}, {192, 5, 1}, {196, 4, 2}, {212, 2, 2}, {216, 4, 2}, {224, 5, 1}, {228, 4, 3}, {252, 2, 2}, {256, 4, 3}, {268, 2, 2}, {272, 4, 3}, {284, 2, 2}, {288, 4, 5}, {316, 4, 11}, {360, 5, 1}, {364, 4, 2}};
 static struct tag_swap_run const struct_shader_texture_animation_runs[] = {{0, 2, 2}, {4, 4, 3}, {16, 2, 2}, {20, 4, 3}, {32, 2, 2}, {36, 4, 5}};
 static struct tag_swap_run const struct_shader_transparent_runs[] = {{2, 2, 5}, {12, 4, 2}, {20, 5, 1}, {24, 4, 3}, {36, 5, 2}, {44, 4, 1}, {48, 5, 2}};
-static struct tag_swap_run const struct_shader_transparent_chicago_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 4}, {42, 2, 5}, {52, 4, 2}, {60, 5, 1}, {64, 4, 3}, {76, 5, 2}, {84, 4, 1}, {88, 5, 2}, {96, 4, 1}};
+static struct tag_swap_run const struct_shader_transparent_chicago_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 4}, {42, 2, 5}, {52, 4, 2}, {60, 5, 1}, {64, 4, 3}, {76, 5, 2}, {84, 4, 1}, {88, 5, 2}, {96, 2, 2}};
 static struct tag_swap_run const struct_shader_transparent_chicago_extended_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 4}, {42, 2, 5}, {52, 4, 2}, {60, 5, 1}, {64, 4, 3}, {76, 5, 2}, {84, 4, 1}, {88, 5, 2}, {96, 4, 1}, {100, 5, 2}, {108, 4, 1}};
 static struct tag_swap_run const struct_shader_transparent_chicago_map_runs[] = {{0, 2, 1}, {44, 2, 2}, {84, 4, 7}, {112, 5, 1}, {116, 4, 2}, {164, 2, 2}, {168, 4, 3}, {180, 2, 2}, {184, 4, 3}, {196, 2, 2}, {200, 4, 5}};
 static struct tag_swap_run const struct_shader_transparent_generic_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 4}, {42, 2, 5}, {52, 4, 2}, {60, 5, 1}, {64, 4, 3}, {76, 5, 2}, {84, 4, 1}, {88, 5, 2}, {96, 4, 1}, {100, 5, 2}};
 static struct tag_swap_run const struct_shader_transparent_generic_map_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 5, 1}, {36, 4, 2}, {44, 2, 2}, {48, 4, 3}, {60, 2, 2}, {64, 4, 3}, {76, 2, 2}, {80, 4, 5}};
 static struct tag_swap_run const struct_shader_transparent_generic_stage_runs[] = {{0, 2, 4}, {8, 4, 13}, {60, 2, 26}};
 static struct tag_swap_run const struct_shader_transparent_glass_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {84, 4, 5}, {104, 5, 1}, {108, 4, 2}, {136, 2, 2}, {140, 4, 9}, {176, 5, 1}, {180, 4, 4}, {196, 5, 1}, {200, 4, 2}, {336, 2, 2}, {340, 4, 2}, {348, 5, 1}, {352, 4, 4}, {368, 5, 1}, {372, 4, 2}};
-static struct tag_swap_run const struct_shader_transparent_meter_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {76, 4, 1}, {80, 5, 1}, {84, 4, 2}};
+static struct tag_swap_run const struct_shader_transparent_meter_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {76, 4, 1}, {80, 5, 1}, {84, 4, 2}, {124, 4, 17}, {216, 2, 6}};
 static struct tag_swap_run const struct_shader_transparent_plasma_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 4}, {44, 2, 2}, {48, 4, 1}, {52, 2, 2}, {56, 4, 2}, {96, 4, 8}, {128, 2, 1}, {192, 4, 6}, {216, 5, 1}, {220, 4, 2}, {264, 4, 6}, {288, 5, 1}, {292, 4, 2}};
 static struct tag_swap_run const struct_shader_transparent_water_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {76, 4, 1}, {80, 5, 1}, {84, 4, 2}, {108, 4, 8}, {156, 4, 1}, {160, 5, 1}, {164, 4, 2}, {188, 4, 4}, {204, 5, 1}, {208, 4, 2}, {216, 2, 2}, {220, 4, 2}, {292, 4, 1}, {296, 5, 2}};
 static struct tag_swap_run const struct_sky_animation_runs[] = {{0, 2, 2}, {4, 4, 1}};
-static struct tag_swap_run const struct_sky_definition_runs[] = {{0, 4, 1}, {4, 5, 1}, {8, 4, 3}, {20, 5, 1}, {24, 4, 2}, {152, 4, 1}, {156, 5, 1}, {160, 4, 4}, {176, 5, 2}, {184, 4, 1}, {188, 5, 2}, {196, 4, 1}, {200, 5, 2}};
-static struct tag_swap_run const struct_sky_light_runs[] = {{0, 4, 1}, {4, 5, 1}, {8, 4, 2}};
+static struct tag_swap_run const struct_sky_definition_runs[] = {{0, 4, 1}, {4, 5, 1}, {8, 4, 3}, {20, 5, 1}, {24, 4, 2}, {88, 4, 3}, {108, 4, 6}, {140, 4, 4}, {156, 5, 1}, {160, 4, 4}, {176, 5, 2}, {184, 4, 1}, {188, 5, 2}, {196, 4, 1}, {200, 5, 2}};
+static struct tag_swap_run const struct_sky_light_runs[] = {{0, 4, 1}, {4, 5, 1}, {8, 4, 2}, {104, 4, 2}};
 static struct tag_swap_run const struct_sky_shader_function_runs[] = {{0, 4, 1}};
 static struct tag_swap_run const struct_sound_definition_runs[] = {{0, 4, 1}, {4, 2, 2}, {8, 4, 10}, {60, 4, 3}, {84, 4, 3}, {108, 2, 2}, {112, 4, 1}, {116, 5, 1}, {120, 4, 2}, {128, 2, 2}, {132, 4, 6}, {156, 5, 2}};
 static struct tag_swap_run const struct_sound_environment_definition_runs[] = {{0, 4, 1}, {4, 2, 2}, {8, 4, 12}};
@@ -307,7 +307,7 @@ static struct tag_swap_run const struct_unit_initial_weapon_runs[] = {{0, 4, 1},
 static struct tag_swap_run const struct_unit_placement_runs[] = {{0, 2, 4}, {8, 4, 6}, {32, 2, 2}, {36, 4, 5}, {64, 4, 4}};
 static struct tag_swap_run const struct_unit_seat_runs[] = {{0, 4, 1}, {68, 4, 16}, {196, 4, 4}, {212, 5, 2}, {220, 4, 1}, {224, 5, 2}, {232, 4, 1}, {236, 2, 2}, {240, 4, 3}, {252, 5, 1}, {256, 4, 7}};
 static struct tag_swap_run const struct_vehicle_animation_runs[] = {{0, 4, 2}, {8, 2, 2}, {12, 4, 2}, {20, 2, 2}, {24, 4, 18}, {96, 5, 2}, {104, 4, 1}, {108, 5, 2}};
-static struct tag_swap_run const struct_vehicle_definition_runs[] = {{0, 2, 2}, {4, 4, 10}, {44, 5, 1}, {48, 4, 3}, {60, 5, 1}, {64, 4, 13}, {116, 5, 1}, {120, 4, 3}, {132, 5, 1}, {136, 4, 3}, {148, 5, 1}, {152, 4, 3}, {164, 5, 1}, {168, 4, 24}, {264, 2, 4}, {272, 4, 11}, {316, 2, 2}, {320, 4, 1}, {324, 5, 2}, {332, 4, 1}, {336, 5, 2}, {344, 4, 1}, {348, 5, 2}, {356, 4, 1}, {360, 5, 2}, {368, 4, 1}, {372, 5, 2}, {380, 4, 1}, {384, 2, 2}, {388, 4, 2}, {396, 5, 1}, {400, 4, 2}, {408, 2, 4}, {416, 4, 2}, {488, 4, 4}, {504, 5, 2}, {512, 4, 20}, {592, 5, 1}, {596, 4, 2}, {604, 2, 2}, {608, 4, 11}, {652, 5, 1}, {656, 4, 2}, {664, 2, 2}, {668, 4, 4}, {684, 5, 2}, {692, 4, 1}, {696, 5, 2}, {704, 4, 1}, {708, 2, 4}, {716, 4, 1}, {720, 5, 2}, {728, 4, 1}, {732, 5, 2}, {740, 4, 1}, {744, 5, 2}, {752, 4, 1}, {756, 2, 2}, {760, 4, 9}, {796, 2, 4}, {816, 4, 2}, {832, 4, 2}, {868, 4, 1}, {944, 4, 1}, {948, 5, 1}, {952, 4, 3}, {964, 5, 1}, {968, 4, 3}, {980, 5, 1}, {984, 4, 3}, {996, 5, 1}, {1000, 4, 2}};
+static struct tag_swap_run const struct_vehicle_definition_runs[] = {{0, 2, 2}, {4, 4, 10}, {44, 5, 1}, {48, 4, 3}, {60, 5, 1}, {64, 4, 13}, {116, 5, 1}, {120, 4, 3}, {132, 5, 1}, {136, 4, 3}, {148, 5, 1}, {152, 4, 3}, {164, 5, 1}, {168, 4, 24}, {264, 2, 4}, {272, 4, 11}, {316, 2, 2}, {320, 4, 1}, {324, 5, 2}, {332, 4, 1}, {336, 5, 2}, {344, 4, 1}, {348, 5, 2}, {356, 4, 1}, {360, 5, 2}, {368, 4, 1}, {372, 5, 2}, {380, 4, 1}, {384, 2, 2}, {388, 4, 2}, {396, 5, 1}, {400, 4, 2}, {408, 2, 4}, {416, 4, 2}, {488, 4, 4}, {504, 5, 2}, {512, 4, 20}, {592, 5, 1}, {596, 4, 2}, {604, 2, 2}, {608, 4, 11}, {652, 5, 1}, {656, 4, 2}, {664, 2, 2}, {668, 4, 4}, {684, 5, 2}, {692, 4, 1}, {696, 5, 2}, {704, 4, 1}, {708, 2, 4}, {716, 4, 1}, {720, 5, 2}, {728, 4, 1}, {732, 5, 2}, {740, 4, 1}, {744, 5, 2}, {752, 4, 1}, {756, 2, 2}, {760, 4, 9}, {796, 2, 4}, {816, 4, 2}, {832, 4, 2}, {868, 4, 1}, {896, 4, 11}, {944, 4, 1}, {948, 5, 1}, {952, 4, 3}, {964, 5, 1}, {968, 4, 3}, {980, 5, 1}, {984, 4, 3}, {996, 5, 1}, {1000, 4, 2}};
 static struct tag_swap_run const struct_vehicle_suspension_runs[] = {{0, 2, 2}, {4, 4, 2}};
 static struct tag_swap_run const struct_vibrate_frequency_definition_runs[] = {{0, 4, 2}, {8, 2, 2}, {12, 4, 2}};
 static struct tag_swap_run const struct_virtual_keyboard_definition_runs[] = {{0, 4, 1}, {4, 5, 1}, {8, 4, 3}, {20, 5, 1}, {24, 4, 3}, {36, 5, 1}, {40, 4, 3}, {52, 5, 2}};
@@ -575,12 +575,12 @@ struct tag_swap_type const tag_swap_types[] =
 	{"struct shader_transparent_generic_map", 100, 10, struct_shader_transparent_generic_map_runs},
 	{"struct shader_transparent_generic_stage", 112, 3, struct_shader_transparent_generic_stage_runs},
 	{"struct shader_transparent_glass_definition", 480, 18, struct_shader_transparent_glass_definition_runs},
-	{"struct shader_transparent_meter_definition", 260, 6, struct_shader_transparent_meter_definition_runs},
+	{"struct shader_transparent_meter_definition", 260, 8, struct_shader_transparent_meter_definition_runs},
 	{"struct shader_transparent_plasma_definition", 332, 15, struct_shader_transparent_plasma_definition_runs},
 	{"struct shader_transparent_water_definition", 320, 17, struct_shader_transparent_water_definition_runs},
 	{"struct sky_animation", 36, 2, struct_sky_animation_runs},
-	{"struct sky_definition", 208, 13, struct_sky_definition_runs},
-	{"struct sky_light", 116, 3, struct_sky_light_runs},
+	{"struct sky_definition", 208, 15, struct_sky_definition_runs},
+	{"struct sky_light", 116, 4, struct_sky_light_runs},
 	{"struct sky_shader_function", 36, 1, struct_sky_shader_function_runs},
 	{"struct sound_definition", 164, 12, struct_sound_definition_runs},
 	{"struct sound_environment_definition", 72, 3, struct_sound_environment_definition_runs},
@@ -634,7 +634,7 @@ struct tag_swap_type const tag_swap_types[] =
 	{"struct unit_placement", 120, 5, struct_unit_placement_runs},
 	{"struct unit_seat", 284, 11, struct_unit_seat_runs},
 	{"struct vehicle_animation", 116, 8, struct_vehicle_animation_runs},
-	{"struct vehicle_definition", 1008, 72, struct_vehicle_definition_runs},
+	{"struct vehicle_definition", 1008, 73, struct_vehicle_definition_runs},
 	{"struct vehicle_suspension", 20, 2, struct_vehicle_suspension_runs},
 	{"struct vibrate_frequency_definition", 20, 3, struct_vibrate_frequency_definition_runs},
 	{"struct virtual_keyboard_definition", 60, 8, struct_virtual_keyboard_definition_runs},

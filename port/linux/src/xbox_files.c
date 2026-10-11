@@ -340,6 +340,26 @@ HANDLE WINAPI CreateFileA(LPCSTR file_name, DWORD desired_access, DWORD share_mo
 	}
 	if ((flags & O_TRUNC) && (flags & O_ACCMODE) == O_RDONLY)
 		flags = (flags & ~O_ACCMODE) | O_RDWR;
+#ifdef __WIIU__
+	/* port: the Wii U's open() (wut's devoptab) only accepts the flag mixes
+	   that match a C fopen mode and fails the rest with EINVAL. Halo opens
+	   saves with write access and OPEN_EXISTING, a plain O_WRONLY, which is
+	   one of those. Rewrite each mix to an equivalent one it accepts. */
+	if ((flags & O_ACCMODE) == O_RDONLY && (flags & O_CREAT))
+		flags = (flags & ~O_ACCMODE) | O_RDWR;
+	if ((flags & O_ACCMODE) == O_WRONLY && !(flags & (O_CREAT | O_TRUNC | O_APPEND)))
+		flags = (flags & ~O_ACCMODE) | O_RDWR;
+	if ((flags & O_TRUNC) && !(flags & O_CREAT))
+	{
+		/* TRUNCATE_EXISTING: only valid on a file that is already there */
+		if (!existed)
+		{
+			SetLastError(ERROR_FILE_NOT_FOUND);
+			return INVALID_HANDLE_VALUE;
+		}
+		flags |= O_CREAT;
+	}
+#endif
 
 	if (existed && (information.flags & _posix_file_is_directory))
 	{

@@ -210,6 +210,25 @@ HRESULT WINAPI D3DDevice_CreateCubeTexture(UINT edge_length, UINT levels, DWORD 
 	return create_texture(edge_length, edge_length, 1, levels, format, TRUE, (D3DBaseTexture **)texture);
 }
 
+#ifdef __WIIU__
+/* port: the Wii U cannot fault on a write to a cached texture's pages
+(port/wiiu/src/wiiu_memory_watch.c), so a lock that may write marks the
+whole texture written, and the renderer uploads it again when next drawn.
+The game's text draws its letters into a texture this way. */
+static void lock_marks_written(const DWORD *resource, DWORD flags)
+{
+	struct xgpu_texture_description description;
+	char *bits = (char *)resource_data(resource[1]);
+
+	if (!bits || (flags & D3DLOCK_READONLY))
+		return;
+	xgpu_texture_describe(resource[3], resource[4], &description);
+	memory_watch_prepare_write(bits, xgpu_texture_face_size(&description) * (description.cube_map ? 6 : 1));
+}
+#else
+#define lock_marks_written(resource, flags) ((void)(resource), (void)(flags))
+#endif
+
 static void lock_level(const DWORD *resource, unsigned long face, unsigned long level,
 	D3DLOCKED_RECT *locked, CONST RECT *rectangle)
 {
@@ -239,15 +258,15 @@ static void lock_level(const DWORD *resource, unsigned long face, unsigned long 
 
 void WINAPI D3DTexture_LockRect(D3DTexture *texture, UINT level, D3DLOCKED_RECT *locked, CONST RECT *rectangle, DWORD flags)
 {
-	(void)flags;
 	lock_level((const DWORD *)texture, 0, level, locked, rectangle);
+	lock_marks_written((const DWORD *)texture, flags);
 }
 
 void WINAPI D3DCubeTexture_LockRect(D3DCubeTexture *texture, D3DCUBEMAP_FACES face, UINT level,
 	D3DLOCKED_RECT *locked, CONST RECT *rectangle, DWORD flags)
 {
-	(void)flags;
 	lock_level((const DWORD *)texture, (unsigned long)face, level, locked, rectangle);
+	lock_marks_written((const DWORD *)texture, flags);
 }
 
 void WINAPI D3DVolumeTexture_LockBox(D3DVolumeTexture *texture, UINT level, D3DLOCKED_BOX *locked,
@@ -258,7 +277,7 @@ void WINAPI D3DVolumeTexture_LockBox(D3DVolumeTexture *texture, UINT level, D3DL
 	unsigned long row_pitch, slice;
 	char *bits;
 
-	(void)flags;
+	lock_marks_written(resource, flags);
 	xgpu_texture_describe(resource[3], resource[4], &description);
 	row_pitch = xgpu_texture_level_pitch(&description, level);
 	slice = row_pitch * level_dimension(description.height, level);
@@ -325,8 +344,8 @@ void WINAPI D3DSurface_GetDesc(D3DSurface *surface, D3DSURFACE_DESC *description
 
 void WINAPI D3DSurface_LockRect(D3DSurface *surface, D3DLOCKED_RECT *locked, CONST RECT *rectangle, DWORD flags)
 {
-	(void)flags;
 	lock_level((const DWORD *)surface, 0, 0, locked, rectangle);
+	lock_marks_written((const DWORD *)surface, flags);
 }
 
 /* ---------- vertex and index buffers */

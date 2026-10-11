@@ -287,4 +287,44 @@ extern boolean debug_trigger_volumes;
 
 /* ---------- public code */
 
+/* port: every script value lives in a long slot (a thread's stack, a
+global, a syntax node's data, a function's argument), and a boolean or a
+short sits at the start of its slot, where the hs value unions and the
+compiled scripts (byte swapped so: tag_byte_swap.c's swap_scripts) put it.
+On a little-endian machine that is also the long's low byte or word, so
+casting the long to a boolean or short reads the same value; on a
+big-endian one (the Wii U) the cast reads the slot's other end. A small
+value is read from and written to a slot through these */
+static inline short hs_value_short(
+	long value)
+{
+	return *(short *)&value;
+}
+
+static inline boolean hs_value_boolean(
+	long value)
+{
+	return *(boolean *)&value;
+}
+
+static inline long hs_value_from_short(
+	short short_value)
+{
+	long value = 0;
+
+	*(short *)&value = short_value;
+
+	return value;
+}
+
+static inline long hs_value_from_boolean(
+	boolean boolean_value)
+{
+	long value = 0;
+
+	*(boolean *)&value = boolean_value;
+
+	return value;
+}
+
 #endif // __HS_H

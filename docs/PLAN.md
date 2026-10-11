@@ -31,10 +31,10 @@ change code the PC builds also use (source/, port/linux/, port/include/).
 | T-001 | Pin the build, embed the build ID, time-stamp the log, write BUILDING-WIIU.md / STATUS.md / PLAN.md | a clean rebuild matches BUILDINFO; halou.log line 1 names the commit | tools/wiiu_build.*, tools/wiiu_cafeglsl.sh, port/wiiu/src/wiiu_main.c, port/linux/src/xbox_kernel.c (shared, Wii U only) | done, awaiting review |
 | T-002 | CafeGLSL crash at the first shader compile. Time box: 4 hours of investigation, then precompiled shaders either way | the clear shader compiles in Cemu, or the time box ends and the findings are in STATUS.md | port/wiiu/src/wiiu_gl.c | done 2026-10-11: cause was no __eabi in clang's main, fixed in 35fcaa0, verified by r08 |
 | T-003 | Precompiled shaders: dump the generated GLSL from the PC build, compile offline to .gsh, look up by hash, fall back to CafeGLSL with a logged miss. The cache is built from the maps on Benjamin's machine and never committed | menu draws with no runtime compile | port/linux/src/d3d8_gl.c (shared), wiiu_gl.c, tools/ | |
-| T-004 | Fix whatever the first picture shows wrong (orientation, colours, textures) | menu looks as on PC | wiiu_gl.c | |
-| T-005 | GamePad and Pro Controller input (VPAD, KPAD); fix the save-file open error 0x57 | menus navigable; profile saves | port/wiiu/src/ | input done in 1b9c97c (run r11 to test); saves still to do |
+| T-004 | Fix whatever the first picture shows wrong (orientation, colours, textures) | menu looks as on PC | wiiu_gl.c | text: byte order a9eb234, re-upload 310a1b3 (run r13 to test); menu background and orange version text open |
+| T-005 | GamePad and Pro Controller input (VPAD, KPAD); fix the save-file open error 0x57 | menus navigable; profile saves | port/wiiu/src/ | input done in 1b9c97c (r11: menus move); save open fix in 310a1b3 (run r13 to test) |
 | T-006 | 'metr' tag schema | maptest: 0 groups without a schema | port/linux/game/tag_schema_effects.c (shared) | |
-| T-007 | Sound (AX) | menu music audible | port/wiiu/src/ | built in 96fa346 (run r11 to test) |
+| T-007 | Sound (AX) | menu music audible | port/wiiu/src/ | done: verified by r11 |
 | T-008 | Real hardware: measure heap free and map load times first | numbers in a run folder | | |
 | T-009 | Merge upstream OpenCE (401 commits behind on 2026-10-11) at a milestone tag, not mid-renderer | one merge commit recording the upstream hash; PC and Wii U builds pass | | |
 | T-010 | Networking (System Link) | | | last |

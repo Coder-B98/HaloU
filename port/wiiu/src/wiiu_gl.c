@@ -915,32 +915,6 @@ static void internal_programs_initialize(void)
 		internal_program_make(&blit_program, internal_vertex_blit, internal_pixel_blit, "blit");
 }
 
-/* T-002: the clear program compiled and thrown away, from wherever the
-caller is (wiiu_main.c asks at the start, and again on the game's thread
-before the game starts), so the log says whether the compiler fails
-everywhere in this program or only once the game is running */
-void wiiu_gl_compiler_test(const char *when)
-{
-	GX2VertexShader *vertex = NULL;
-	GX2PixelShader *pixel = NULL;
-	char log[1024];
-
-	log_free_memory(when);
-	log_stack(when);
-	compiler_start();
-	platform_log("GX2: test compile %s", when);
-	log[0] = 0;
-	if (CompileShaderPair(internal_vertex_clear, internal_pixel_clear, GLSL_COMPILE_REGISTER, &vertex, &pixel,
-		log, sizeof(log), GLSL_COMPILER_FLAG_NONE) == GLSL_SHADER_MODE_ERROR)
-	{
-		platform_log("GX2: test compile %s failed: %s", when, log);
-		return;
-	}
-	platform_log("GX2: test compile %s worked (%u + %u bytes)", when, (unsigned)vertex->size,
-		(unsigned)pixel->size);
-	FreeShaders(vertex, pixel);
-}
-
 /* ---------- framebuffers: what a draw draws into */
 
 struct draw_targets

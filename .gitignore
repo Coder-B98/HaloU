@@ -30,3 +30,11 @@ original/
 
 # CI build outputs (tools/ci_build.py)
 dist/
+
+# Halo game data and anything made from it: never commit (BUILDING-WIIU.md)
+*.map
+*.iso
+*.xiso
+*.sav
+*.gsh
+z/

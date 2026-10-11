@@ -1,0 +1,3 @@
+# vendored and generated files, so diffs and statistics show the hand-written code
+port/wiiu/include/khronos/** linguist-vendored
+port/linux/game/tag_swap_codes.c linguist-generated

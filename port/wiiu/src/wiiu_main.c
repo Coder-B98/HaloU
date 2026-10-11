@@ -16,21 +16,57 @@ builds' main thread has (a Wii U program's own is small).
 #include <coreinit/debug.h>
 #include <coreinit/exception.h>
 #include <coreinit/thread.h>
+#include <coreinit/time.h>
 #include <whb/log.h>
 #include <whb/log_cafe.h>
 #include <whb/log_udp.h>
 #include <whb/proc.h>
 
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+
+#include "halou_build_id.h"
 
 #define DATA_ROOT "fs:/vol/external01/halou"
 #define LOG_PATH DATA_ROOT "/halou.log"
 #define GAME_STACK_SIZE (8 * 1024 * 1024)
 
 int halo_xbox_main(void);
+
+/* ---------- the time in the log
+
+Each line of the log starts with the seconds since the program started
+([   12.345]), so a log alone says how long things took and how many frames
+a second the game drew (xbox_kernel.c's platform_log asks for it). */
+
+static OSTime start_time;
+
+unsigned long wiiu_log_milliseconds(void)
+{
+	return (unsigned long)OSTicksToMilliseconds(OSGetSystemTime() - start_time);
+}
+
+static void log_time(void)
+{
+	unsigned long milliseconds = wiiu_log_milliseconds();
+
+	fprintf(stderr, "[%5lu.%03lu] ", milliseconds / 1000, milliseconds % 1000);
+}
+
+/* a line of the log, after the time */
+static void log_line(const char *format, ...) __attribute__((format(printf, 1, 2)));
+static void log_line(const char *format, ...)
+{
+	va_list arguments;
+
+	log_time();
+	va_start(arguments, format);
+	vfprintf(stderr, format, arguments);
+	va_end(arguments);
+}
 
 /* ---------- when something goes wrong: a last line in the log
 
@@ -41,7 +77,7 @@ ways a program can die each write where it was first. */
 newlib's */
 void abort(void)
 {
-	fprintf(stderr, "Halo U: abort() called from %p\n", __builtin_return_address(0));
+	log_line("Halo U: abort() called from %p\n", __builtin_return_address(0));
 	OSFatal("Halo U: abort() called. See sd:/halou/halou.log");
 	for (;;)
 		;
@@ -49,12 +85,12 @@ void abort(void)
 
 static void exit_said(void)
 {
-	fprintf(stderr, "Halo U: exit() called\n");
+	log_line("Halo U: exit() called\n");
 }
 
 static BOOL crashed(const char *what, OSContext *context)
 {
-	fprintf(stderr, "Halo U: %s exception at %08x (called from %08x), address %08x\n", what,
+	log_line("Halo U: %s exception at %08x (called from %08x), address %08x\n", what,
 		(unsigned)context->srr0, (unsigned)context->lr, (unsigned)context->dar);
 	OSFatal("Halo U crashed. See sd:/halou/halou.log");
 	return FALSE;
@@ -82,6 +118,7 @@ int main(int argc, char **argv)
 
 	(void)argc;
 	(void)argv;
+	start_time = OSGetSystemTime();
 	WHBProcInit();
 	WHBLogCafeInit();
 	WHBLogUdpInit();
@@ -92,8 +129,11 @@ int main(int argc, char **argv)
 		setvbuf(stderr, NULL, _IONBF, 0);
 	else
 		WHBLogPrint("Halo U: cannot write " LOG_PATH);
-	fprintf(stderr, "Halo U: starting, data in " DATA_ROOT "\n");
-	WHBLogPrint("Halo U: starting, data in " DATA_ROOT);
+	/* first, which build this is (the commit: tools/wiiu_build.py), so a log
+	always says what made it */
+	log_line("Halo U: build " HALOU_BUILD_ID "\n");
+	log_line("Halo U: starting, data in " DATA_ROOT "\n");
+	WHBLogPrint("Halo U: build " HALOU_BUILD_ID ", data in " DATA_ROOT);
 
 	atexit(exit_said);
 	OSSetExceptionCallbackEx(OS_EXCEPTION_MODE_GLOBAL_ALL_CORES, OS_EXCEPTION_TYPE_DSI, crashed_dsi);
@@ -102,17 +142,17 @@ int main(int argc, char **argv)
 
 	setenv("HALO_DATA_ROOT", DATA_ROOT, 1);
 	if (chdir(DATA_ROOT) != 0)
-		fprintf(stderr, "Halo U: there is no " DATA_ROOT " folder on the SD card\n");
+		log_line("Halo U: there is no " DATA_ROOT " folder on the SD card\n");
 
 	pthread_attr_init(&attributes);
 	pthread_attr_setstacksize(&attributes, GAME_STACK_SIZE);
 	if (pthread_create(&thread, &attributes, game_thread, &result) == 0)
 		pthread_join(thread, NULL);
 	else
-		fprintf(stderr, "Halo U: cannot start the game's thread\n");
+		log_line("Halo U: cannot start the game's thread\n");
 	pthread_attr_destroy(&attributes);
 
-	fprintf(stderr, "Halo U: the game returned %d\n", result);
+	log_line("Halo U: the game returned %d\n", result);
 	WHBLogUdpDeinit();
 	WHBLogCafeDeinit();
 	WHBProcShutdown();

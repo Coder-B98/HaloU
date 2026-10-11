@@ -347,7 +347,10 @@ void terminal_printf(
 	...)
 {
 	real_argb_color default_terminal_printf_color;
-	char *arglist;
+	/* port: a va_list, not the char * it was (which is what the Xbox's
+	va_list is); on PowerPC va_start fills in a structure, and with a
+	char * it wrote through a pointer nobody had set */
+	va_list arglist;
 
 	va_start(arglist, format);
 

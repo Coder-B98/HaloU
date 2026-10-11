@@ -243,6 +243,16 @@ static long hires_text_font = NONE;
 static real text_scale = 1.0f;
 static real text_scale_origin_x = 0.0f;
 static real text_scale_origin_y = 0.0f;
+/* port: a 16-bit texel stored as the Xbox laid it out, low byte first,
+which is how the port's renderer reads every texture
+(port/linux/src/xbox_textures.c); on a big-endian machine (the Wii U) a
+plain store put the alpha in the wrong byte, and text drew as solid blocks */
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define XBOX_TEXEL16(value) ((word)((((value) & 0xff) << 8) | (((value) >> 8) & 0xff)))
+#else
+#define XBOX_TEXEL16(value) ((word)(value))
+#endif
+
 static pixel32 global_shadow_color = 0;
 static short rasterizer_text_unused = 0;
 static short magic_number= 12;
@@ -1189,11 +1199,11 @@ cache_hardware_format_character(
 				if (y < padding || y >= padding + font_character->bitmap_height ||
 					x < padding || x >= padding + font_character->bitmap_width)
 				{
-					*destination++ = 0x0FFF;
+					*destination++ = XBOX_TEXEL16(0x0FFF);
 				}
 				else
 				{
-					*destination++ = (word)((*source++ << 8) | 0x0FFF);
+					*destination++ = XBOX_TEXEL16((*source++ << 8) | 0x0FFF);
 				}
 			}
 		}

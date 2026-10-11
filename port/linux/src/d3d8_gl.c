@@ -996,8 +996,10 @@ static void *vertical_blank_thread(void *unused)
 				wait.tv_nsec += 1000000000L;
 				wait.tv_sec--;
 			}
+			/* (with somewhere for the time left: wut's nanosleep writes it
+			even when given NULL, which crashed run r08) */
 			if (wait.tv_sec >= 0)
-				nanosleep(&wait, NULL);
+				nanosleep(&wait, &wait);
 		}
 #else
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);

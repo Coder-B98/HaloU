@@ -32,9 +32,9 @@ change code the PC builds also use (source/, port/linux/, port/include/).
 | T-002 | CafeGLSL crash at the first shader compile. Time box: 4 hours of investigation, then precompiled shaders either way | the clear shader compiles in Cemu, or the time box ends and the findings are in STATUS.md | port/wiiu/src/wiiu_gl.c | done 2026-10-11: cause was no __eabi in clang's main, fixed in 35fcaa0, verified by r08 |
 | T-003 | Precompiled shaders: dump the generated GLSL from the PC build, compile offline to .gsh, look up by hash, fall back to CafeGLSL with a logged miss. The cache is built from the maps on Benjamin's machine and never committed | menu draws with no runtime compile | port/linux/src/d3d8_gl.c (shared), wiiu_gl.c, tools/ | |
 | T-004 | Fix whatever the first picture shows wrong (orientation, colours, textures) | menu looks as on PC | wiiu_gl.c | |
-| T-005 | GamePad and Pro Controller input (VPAD, KPAD); fix the save-file open error 0x57 | menus navigable; profile saves | port/wiiu/src/ | input done in 1b9c97c (run r10 to test); saves still to do |
+| T-005 | GamePad and Pro Controller input (VPAD, KPAD); fix the save-file open error 0x57 | menus navigable; profile saves | port/wiiu/src/ | input done in 1b9c97c (run r11 to test); saves still to do |
 | T-006 | 'metr' tag schema | maptest: 0 groups without a schema | port/linux/game/tag_schema_effects.c (shared) | |
-| T-007 | Sound (AX) | menu music audible | port/wiiu/src/ | next (Benjamin asked 2026-10-11) |
+| T-007 | Sound (AX) | menu music audible | port/wiiu/src/ | built in 96fa346 (run r11 to test) |
 | T-008 | Real hardware: measure heap free and map load times first | numbers in a run folder | | |
 | T-009 | Merge upstream OpenCE (401 commits behind on 2026-10-11) at a milestone tag, not mid-renderer | one merge commit recording the upstream hash; PC and Wii U builds pass | | |
 | T-010 | Networking (System Link) | | | last |

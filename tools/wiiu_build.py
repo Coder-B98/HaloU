@@ -63,10 +63,12 @@ LINUX_PLATFORM_UNITS = [
     "nv2a_vsh.c",
     "xbox_textures.c",
     "xgpu_text.c",
+    # the sound: the Linux build's mixer, played through AX (port/wiiu/src/wiiu_audio.c)
+    "dsound_sdl.c",
 ]
 
 # the Wii U's units that are not the Xbox's platform layer, built without it
-WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c", "wiiu_alloc.c", "wiiu_pads.c"]
+WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c", "wiiu_alloc.c", "wiiu_pads.c", "wiiu_audio.c"]
 
 # the extra flags of some of those: the GL shim reads the Linux layer's gl.h
 # (its list of functions) and the Khronos headers that came with CafeGLSL

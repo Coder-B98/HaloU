@@ -51,9 +51,10 @@ Statuses: VERIFIED, INFERRED, OUTDATED (true before, not now), WITHDRAWN
 - [A12] BUILDING-WIIU.md reproduces a build's hash | VERIFIED 2026-10-11 by Claude for 93682bf; open for Grok to repeat
 - [A13] PC builds unaffected by shared-code commits | open: shared changes since 4e8ed2f have not had a Linux build or test run recorded
 - [S7] Profile saves fail with 0x57 | VERIFIED: audit\2026-10-10-r02\debug.txt
-- [S8] The clear shader compiles with CafeGLSL on the build machine | INFERRED: not recorded as an artifact yet; to be attached with T-002
+- [S8] The clear shader compiles with CafeGLSL on the Wii U side, in Cemu, when the game is not in the program | VERIFIED 2026-10-11: run r04 (audit\2026-10-11-r04\glsltest.txt, build abf896a halou_glsltest.wuhb): main thread, after GX2 start-up and on an 8 MB CPU 1 thread all OK, 88 + 48 bytes
 - [S11] All 494 game units compile for PPC | INFERRED: not re-run since 8e1abd4; superseded in practice by the full build linking
 - [C1] The CafeGLSL crash is a host-side Cemu crash or memory exhaustion | INFERRED (Grok): no guest exception and no Cemu log line
+  - 2026-10-11: "Cemu cannot run CafeGLSL" REFUTED by r04 (the same compiler works in a program of its own). Run r05 (abf896a) still closes Cemu at the first compile with no guest exception line; Cemu does not report bad guest memory accesses as exceptions, so a bad pointer inside the compiler is the likeliest reading [INFERRED]. Memory exhaustion is still open: r05's heap counts read 0 because they asked the system heap, which wut hands to newlib. Build bb5a922 logs newlib's counts and every failed allocation, and compiles the clear program at the start, on the game's thread and in the renderer; run r06 decides which.
 
 ## Open questions for Benjamin
 

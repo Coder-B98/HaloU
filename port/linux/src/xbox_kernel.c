@@ -24,10 +24,21 @@ threads, asynchronous procedure calls, time, memory and debug output.
 
 /* ---------- logging */
 
+#ifdef __WIIU__
+/* the seconds since the Wii U build started, at the start of each line
+(port/wiiu/src/wiiu_main.c) */
+unsigned long wiiu_log_milliseconds(void);
+#endif
+
 void platform_log(const char *format, ...)
 {
 	va_list arguments;
 
+#ifdef __WIIU__
+	unsigned long milliseconds = wiiu_log_milliseconds();
+
+	fprintf(stderr, "[%5lu.%03lu] ", milliseconds / 1000, milliseconds % 1000);
+#endif
 	fputs("halo-linux: ", stderr);
 	va_start(arguments, format);
 	vfprintf(stderr, format, arguments);

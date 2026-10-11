@@ -70,7 +70,8 @@ WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c"]
 
 # the extra flags of some of those: the GL shim reads the Linux layer's gl.h
 # (its list of functions) and the Khronos headers that came with CafeGLSL
-STARTUP_EXTRA = {"wiiu_gl.c": ["-iquote", "port/linux/src", "-Iport/wiiu/include/khronos",
+STARTUP_EXTRA = {"wiiu_main.c": ["-Ibuild/wiiu"],
+                 "wiiu_gl.c": ["-iquote", "port/linux/src", "-Iport/wiiu/include/khronos",
                                f"-isystem{DEVKITPRO}/portlibs/wiiu/include"]}
 
 # the Linux build's flags with no meaning for gcc or the Wii U
@@ -78,7 +79,7 @@ DROP = {
     "-m32", "-malign-double", "-march=native", "-march=x86-64", "-freg-struct-return", "-fno-pic",
     "-fstack-protector-strong", "-D_FILE_OFFSET_BITS=64",
 }
-DROP_PREFIXES = ("--target=", "-Wno-microsoft", "-Wno-pragma-pack", "-Wno-ignored-pragmas",
+DROP_PREFIXES = ("--target=", "-flto", "-fprofile", "-Wno-microsoft", "-Wno-pragma-pack", "-Wno-ignored-pragmas",
                  "-Wno-error=incompatible-function-pointer-types", "-Wno-duplicate-decl-specifier")
 
 
@@ -112,12 +113,28 @@ def wiiu_flags(command: str):
     return source, WIIU_FLAGS + flags
 
 
+def write_build_id():
+    """build/wiiu/halou_build_id.h: the commit the build is made of
+    (git describe, "-dirty" when the tree has changes), which the game
+    writes first in its log. No date, so the same commit builds the same
+    bytes; tools/wiiu_build.sh writes the date in BUILDINFO.txt instead."""
+    describe = subprocess.run(["git", "describe", "--always", "--dirty", "--abbrev=12"],
+                              capture_output=True, text=True).stdout.strip() or "unknown"
+    header = BUILD / "halou_build_id.h"
+    text = f'#define HALOU_BUILD_ID "{describe}"\n'
+    # (written only when it changes, so ninja rebuilds wiiu_main.c only then)
+    if not header.exists() or header.read_text() != text:
+        header.write_text(text)
+    return describe
+
+
 def main() -> int:
     subprocess.run(["ninja", "build/linux/halo_msvc_semantics.h", "build/linux/platform_msvc_semantics.h"],
                    check=True, stdout=subprocess.DEVNULL)
     commands = subprocess.run(["ninja", "-t", "commands", "linux"], check=True, capture_output=True,
                               text=True).stdout.splitlines()
     BUILD.mkdir(parents=True, exist_ok=True)
+    describe = write_build_id()
     for header in ("halo_msvc_semantics.h", "platform_msvc_semantics.h"):
         (BUILD / header).write_text((Path("build/linux") / header).read_text())
 
@@ -172,7 +189,7 @@ def main() -> int:
         n.build(str(BUILD / "halou.rpx"), "rpx", str(BUILD / "halou.elf"))
         n.build(str(BUILD / "halou.wuhb"), "wuhb", str(BUILD / "halou.rpx"))
         n.default(str(BUILD / "halou.wuhb"))
-    print(f"wrote {BUILD / 'build.ninja'}: {len(units)} units")
+    print(f"wrote {BUILD / 'build.ninja'}: {len(units)} units, build {describe}")
     return 0
 
 

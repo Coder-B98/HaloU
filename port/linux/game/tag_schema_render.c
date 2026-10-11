@@ -558,11 +558,23 @@ struct shader_environment_definition
 	/* specular */
 	word specular_flags;
 	short specular_type;
-	byte reserved280[0x50];
+	long unused280[4];
+	real specular_brightness;
+	long unused294[5];
+	real_rgb_color view_perpendicular_color;
+	real_rgb_color view_parallel_color;
+	long unused2C0[4];
 	/* reflection */
 	word reflection_flags;
 	short reflection_type;
-	byte reserved2D4[0x50];
+	real lightmap_brightness_scale;
+	long unused2D8[7];
+	real view_perpendicular_brightness;
+	real view_parallel_brightness;
+	long unused2FC[4];
+	real mirror_index_of_refraction;
+	real mirror_depth;
+	long unused314[4];
 	struct tag_reference reflection_cube_map;
 	byte reserved334[0x10];
 };
@@ -631,6 +643,10 @@ typedef char verify_shader_environment_self_illumination_map_offset[
 	offsetof(struct shader_environment_definition, self_illumination_map) == 0x254 ? 1 : -1];
 typedef char verify_shader_environment_specular_flags_offset[
 	offsetof(struct shader_environment_definition, specular_flags) == 0x27C ? 1 : -1];
+typedef char verify_shader_environment_view_parallel_color_offset[
+	offsetof(struct shader_environment_definition, view_parallel_color) == 0x2B4 ? 1 : -1];
+typedef char verify_shader_environment_mirror_depth_offset[
+	offsetof(struct shader_environment_definition, mirror_depth) == 0x310 ? 1 : -1];
 typedef char verify_shader_environment_reflection_flags_offset[
 	offsetof(struct shader_environment_definition, reflection_flags) == 0x2D0 ? 1 : -1];
 typedef char verify_shader_environment_reflection_cube_map_offset[

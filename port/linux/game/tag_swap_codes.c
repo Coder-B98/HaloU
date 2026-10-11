@@ -236,7 +236,7 @@ static struct tag_swap_run const struct_scenario_weapon_datum_runs[] = {{0, 2, 4
 static struct tag_swap_run const struct_scenery_placement_runs[] = {{0, 2, 4}, {8, 4, 6}, {32, 2, 2}, {36, 4, 5}, {64, 4, 2}};
 static struct tag_swap_run const struct_shader_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 4}};
 static struct tag_swap_run const struct_shader_effect_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 8}, {76, 4, 1}, {80, 5, 1}, {84, 4, 2}, {92, 2, 4}, {100, 4, 3}, {112, 2, 2}, {116, 4, 3}, {128, 2, 2}, {132, 4, 7}};
-static struct tag_swap_run const struct_shader_environment_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {44, 4, 2}, {52, 5, 1}, {56, 4, 2}, {108, 2, 2}, {136, 4, 1}, {140, 5, 1}, {144, 4, 2}, {176, 2, 2}, {180, 4, 2}, {188, 5, 1}, {192, 4, 4}, {208, 5, 1}, {212, 4, 2}, {244, 2, 2}, {248, 4, 2}, {256, 5, 1}, {260, 4, 5}, {292, 4, 2}, {300, 5, 1}, {304, 4, 4}, {336, 2, 2}, {340, 4, 2}, {348, 2, 2}, {352, 4, 2}, {384, 2, 2}, {412, 4, 6}, {436, 2, 2}, {440, 4, 2}, {472, 4, 6}, {496, 2, 2}, {500, 4, 2}, {532, 4, 6}, {556, 2, 2}, {560, 4, 2}, {592, 4, 2}, {600, 5, 1}, {604, 4, 2}, {636, 2, 2}, {720, 2, 2}, {804, 4, 1}, {808, 5, 1}, {812, 4, 2}};
+static struct tag_swap_run const struct_shader_environment_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {44, 4, 2}, {52, 5, 1}, {56, 4, 2}, {108, 2, 2}, {136, 4, 1}, {140, 5, 1}, {144, 4, 2}, {176, 2, 2}, {180, 4, 2}, {188, 5, 1}, {192, 4, 4}, {208, 5, 1}, {212, 4, 2}, {244, 2, 2}, {248, 4, 2}, {256, 5, 1}, {260, 4, 5}, {292, 4, 2}, {300, 5, 1}, {304, 4, 4}, {336, 2, 2}, {340, 4, 2}, {348, 2, 2}, {352, 4, 2}, {384, 2, 2}, {412, 4, 6}, {436, 2, 2}, {440, 4, 2}, {472, 4, 6}, {496, 2, 2}, {500, 4, 2}, {532, 4, 6}, {556, 2, 2}, {560, 4, 2}, {592, 4, 2}, {600, 5, 1}, {604, 4, 2}, {636, 2, 2}, {640, 4, 20}, {720, 2, 2}, {724, 4, 21}, {808, 5, 1}, {812, 4, 2}};
 static struct tag_swap_run const struct_shader_layer_runs[] = {{0, 4, 1}, {4, 5, 1}, {8, 4, 2}};
 static struct tag_swap_run const struct_shader_model_definition_runs[] = {{0, 2, 2}, {4, 4, 7}, {32, 2, 6}, {56, 4, 1}, {76, 2, 1}, {108, 2, 4}, {116, 4, 7}, {156, 4, 3}, {168, 5, 1}, {172, 4, 2}, {188, 4, 1}, {192, 5, 1}, {196, 4, 2}, {212, 2, 2}, {216, 4, 2}, {224, 5, 1}, {228, 4, 3}, {252, 2, 2}, {256, 4, 3}, {268, 2, 2}, {272, 4, 3}, {284, 2, 2}, {288, 4, 5}, {316, 4, 11}, {360, 5, 1}, {364, 4, 2}};
 static struct tag_swap_run const struct_shader_texture_animation_runs[] = {{0, 2, 2}, {4, 4, 3}, {16, 2, 2}, {20, 4, 3}, {32, 2, 2}, {36, 4, 5}};
@@ -563,7 +563,7 @@ struct tag_swap_type const tag_swap_types[] =
 	{"struct scenery_placement", 72, 5, struct_scenery_placement_runs},
 	{"struct shader", 40, 3, struct_shader_runs},
 	{"struct shader_effect_definition", 180, 12, struct_shader_effect_definition_runs},
-	{"struct shader_environment_definition", 836, 45, struct_shader_environment_definition_runs},
+	{"struct shader_environment_definition", 836, 46, struct_shader_environment_definition_runs},
 	{"struct shader_layer", 16, 3, struct_shader_layer_runs},
 	{"struct shader_model_definition", 440, 26, struct_shader_model_definition_runs},
 	{"struct shader_texture_animation", 56, 6, struct_shader_texture_animation_runs},

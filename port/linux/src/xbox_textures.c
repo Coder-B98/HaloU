@@ -589,30 +589,6 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 					free(converted);
 					return;
 				}
-#ifdef __WIIU__
-				/* port (debugging, temporary): the text's letter cache, a
-				128x128 A4R4G4B4 texture, as converted, so the letters can be
-				checked before the GPU samples them */
-				if (level == 0 && information.kind == _texel_a4r4g4b4 && width == 128 && height == 128)
-				{
-					static int uploads, dumps;
-
-					/* (every 8th upload: each new letter uploads it again) */
-					if ((uploads++ & 7) == 0 && dumps < 24)
-					{
-						char dump_path[64];
-						FILE *dump;
-
-						snprintf(dump_path, sizeof(dump_path), "fs:/vol/external01/halou/textcache%02d.bin", dumps++);
-						dump = fopen(dump_path, "wb");
-						if (dump)
-						{
-							fwrite(converted, 4, 128 * 128, dump);
-							fclose(dump);
-						}
-					}
-				}
-#endif
 				if (target == GL_TEXTURE_3D)
 					glTexImage3D(image_target, (GLint)level, GL_RGBA8, width, height, depth, 0, GL_BGRA, GL_UNSIGNED_BYTE, converted);
 				else

@@ -26,6 +26,7 @@ pacman_version() {
 	echo "devkitPro   ${DEVKITPRO_IMAGE:-ghcr.io/wiiu-env/devkitppc@sha256:68785e7d75b070b0aea03272b61f36dd2fddfda4f442cdf0e27b168bd36a09fb (as BUILDING-WIIU.md pins; set DEVKITPRO_IMAGE if not)}"
 	echo "clang       $(clang --version | head -1)"
 	echo "CafeGLSL    $(cat $DEVKITPRO/portlibs/wiiu/share/cafeglsl-commit.txt 2>/dev/null || echo 'unknown: not built by tools/wiiu_cafeglsl.sh')"
+	echo "FFmpeg      $(cat $DEVKITPRO/portlibs/wiiu/share/ffmpeg-commit.txt 2>/dev/null || echo 'unknown: not built by tools/wiiu_ffmpeg.sh') (Bink only, LGPL)"
 	echo "python      $(python3 --version)"
 	echo "halou.rpx   sha256 $(sha256sum $OUT/halou.rpx | cut -d' ' -f1)"
 	echo "halou.wuhb  sha256 $(sha256sum $OUT/halou.wuhb | cut -d' ' -f1)  md5 $(md5sum $OUT/halou.wuhb | cut -d' ' -f1)  size $(stat -c %s $OUT/halou.wuhb)"

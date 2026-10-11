@@ -45,7 +45,6 @@ WIIU_FLAGS = ["--target=powerpc-unknown-eabi", "-mcpu=750", "-mhard-float", "-ml
 # SDL3, OpenGL, the network or the self-updater: the Wii U has its own, or
 # none yet)
 LINUX_PLATFORM_UNITS = [
-    "bink_null.c",
     "xbdm.c",
     "d3d8_resources.c",
     "halo_linker_common.c",
@@ -68,13 +67,16 @@ LINUX_PLATFORM_UNITS = [
 ]
 
 # the Wii U's units that are not the Xbox's platform layer, built without it
-WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c", "wiiu_alloc.c", "wiiu_pads.c", "wiiu_audio.c"]
+WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c", "wiiu_alloc.c", "wiiu_pads.c", "wiiu_audio.c",
+                      # (the Bink movies' decoding: FFmpeg's headers, tools/wiiu_ffmpeg.sh)
+                      "wiiu_bink_decode.c"]
 
 # the extra flags of some of those: the GL shim reads the Linux layer's gl.h
 # (its list of functions) and the Khronos headers that came with CafeGLSL
 STARTUP_EXTRA = {"wiiu_main.c": ["-Ibuild/wiiu"],
                  "wiiu_gl.c": ["-iquote", "port/linux/src", "-Iport/wiiu/include/khronos",
-                               f"-isystem{DEVKITPRO}/portlibs/wiiu/include"]}
+                               f"-isystem{DEVKITPRO}/portlibs/wiiu/include"],
+                 "wiiu_bink_decode.c": [f"-isystem{DEVKITPRO}/portlibs/wiiu/include"]}
 
 # the Linux build's flags with no meaning for gcc or the Wii U
 DROP = {
@@ -175,7 +177,8 @@ def main() -> int:
         n.rule("link", f"DEVKITPRO={DEVKITPRO} $link {' '.join(MACHDEP)} -g -specs={WUT}/share/wut.specs -Wl,-Map,$out.map"
                # (a line in the log for each allocation that fails: port/wiiu/src/wiiu_alloc.c)
                " -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign"
-               f" -o $out @$out.rsp -L{DEVKITPRO}/portlibs/wiiu/lib -L{WUT}/lib -lcafeglsl -lstdc++ -lwut -lm",
+               f" -o $out @$out.rsp -L{DEVKITPRO}/portlibs/wiiu/lib -L{WUT}/lib -lcafeglsl -lstdc++"
+               " -lavformat -lavcodec -lavutil -lwut -lm",
                rspfile="$out.rsp", rspfile_content="$in_newline", description="WIIU LINK $out")
         # (clang marks each object's stack not executable in a .note.GNU-stack
         # section, which elf2rpl has no place for; the Wii U's never is)

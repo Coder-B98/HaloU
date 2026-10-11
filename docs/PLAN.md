@@ -37,4 +37,7 @@ change code the PC builds also use (source/, port/linux/, port/include/).
 | T-007 | Sound (AX) | menu music audible | port/wiiu/src/ | done: verified by r11 |
 | T-008 | Real hardware: measure heap free and map load times first | numbers in a run folder | | |
 | T-009 | Merge upstream OpenCE (401 commits behind on 2026-10-11) at a milestone tag, not mid-renderer | one merge commit recording the upstream hash; PC and Wii U builds pass | | |
+| T-011 | Bink movies: decode the game's .bik files (intro, attract, credits) with FFmpeg's LGPL Bink decoder, picture into the movie texture, sound into a DirectSound stream. Movies stay on Benjamin's machine (sd:/halou/bink), never committed | intro plays with sound in Cemu | port/wiiu/src/wiiu_bink*.c, tools/wiiu_ffmpeg.sh, tools/wiiu_build.* | decoder verified on BE (qemu) 2026-10-11; player in r16, awaiting run |
+| T-012 | Text: letters drawn as 2x2 small copies | menu text reads as on PC | source/rasterizer/rasterizer_text.c (shared) | cause: XBOX_TEXEL16 named its argument twice, so *source++ ran twice; fixed for r16, awaiting run |
+| T-013 | Campaign load: a10 scripts loop creating objects, then halt tag_groups.c:3089 | a10 reaches gameplay | source/hs/ (shared) | cause: on BE, script booleans and shorts read from the slot's wrong end, so every `if`/`sleep_until` was false; fixed for r16, awaiting run |
 | T-010 | Networking (System Link) | | | last |

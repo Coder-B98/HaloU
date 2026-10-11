@@ -39,6 +39,11 @@ overwritten: each run starts with its own header line.
 
 #define LOG_PATH "fs:/vol/external01/halou/glsltest.txt"
 
+/* which build of the test this is (variants.sh) */
+#ifndef GLSLTEST_VARIANT
+#define GLSLTEST_VARIANT "plain"
+#endif
+
 static FILE *log_file;
 static OSTime start_time;
 
@@ -137,13 +142,17 @@ int main(int argc, char **argv)
 	WHBLogCafeInit();
 	WHBLogUdpInit();
 	log_file = fopen(LOG_PATH, "a");
-	say("=== glsltest, build " HALOU_BUILD_ID " ===");
+	say("=== glsltest " GLSLTEST_VARIANT ", build " HALOU_BUILD_ID " ===");
 
 	say_memory("at start");
 	say("step 1: starting the compiler");
 	InitGLSLCompiler();
 	say("step 1: compiler %s started", GetGLSLCompilerVersion());
 
+#ifdef GLSLTEST_PAIR_FIRST
+	/* (the pair first, as Halo does it) */
+	compile_pair("step 1 (main thread, no graphics, the pair first)");
+#endif
 	info[0] = 0;
 	say("step 1: compiling the clear vertex shader alone");
 	vertex = NULL;

@@ -1203,7 +1203,10 @@ cache_hardware_format_character(
 				}
 				else
 				{
-					*destination++ = XBOX_TEXEL16((*source++ << 8) | 0x0FFF);
+					/* (read apart from the macro, which names its value twice) */
+					word texel = (word)((*source++ << 8) | 0x0FFF);
+
+					*destination++ = XBOX_TEXEL16(texel);
 				}
 			}
 		}

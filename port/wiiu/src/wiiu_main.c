@@ -77,6 +77,26 @@ static void log_line(const char *format, ...)
 	va_end(arguments);
 }
 
+/* the console's SD card only records how long a file is when the file is
+flushed or closed, so a console that hangs (and is switched off) leaves an
+empty halou.log however much was written. This thread flushes the log every
+two seconds, and says every fifteen that the program is still alive, so a
+hang shows when it started. */
+static void *log_sync_thread(void *unused)
+{
+	unsigned int ticks = 0;
+
+	(void)unused;
+	for (;;)
+	{
+		OSSleepTicks(OSMillisecondsToTicks(2000));
+		if (++ticks % 8 == 0)
+			log_line("Halo U: still running\n");
+		fsync(fileno(stderr));
+	}
+	return NULL;
+}
+
 /* ---------- when something goes wrong: a last line in the log
 
 A crash on the Wii U (or in Cemu) leaves nothing behind but the log, so the
@@ -170,6 +190,13 @@ int main(int argc, char **argv)
 	setenv("HALO_DATA_ROOT", DATA_ROOT, 1);
 	if (chdir(DATA_ROOT) != 0)
 		log_line("Halo U: there is no " DATA_ROOT " folder on the SD card\n");
+
+	{
+		pthread_t sync_thread;
+
+		if (pthread_create(&sync_thread, NULL, log_sync_thread, NULL) == 0)
+			pthread_detach(sync_thread);
+	}
 
 	pthread_attr_init(&attributes);
 	pthread_attr_setstacksize(&attributes, GAME_STACK_SIZE);

@@ -65,6 +65,9 @@ symbols in this file:
 
 #include <stdarg.h>
 #include <time.h>
+#ifdef __WIIU__
+#include <unistd.h>
+#endif
 
 /* ---------- constants */
 
@@ -176,6 +179,11 @@ static void write_to_debug_file(
 	}
 	fprintf(file, "%s%s", prefix, string);
 	fflush(file);
+#ifdef __WIIU__
+	/* port: the console's SD card keeps a file's length only when it is
+	flushed through, so a hang would leave debug.txt looking empty */
+	fsync(fileno(file));
+#endif
 }
 
 void write_to_error_file(

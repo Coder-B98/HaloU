@@ -28,6 +28,7 @@ pacman_version() {
 	echo "CafeGLSL    $(cat $DEVKITPRO/portlibs/wiiu/share/cafeglsl-commit.txt 2>/dev/null || echo 'unknown: not built by tools/wiiu_cafeglsl.sh')"
 	echo "FFmpeg      $(cat $DEVKITPRO/portlibs/wiiu/share/ffmpeg-commit.txt 2>/dev/null || echo 'unknown: not built by tools/wiiu_ffmpeg.sh') (Bink only, LGPL)"
 	echo "python      $(python3 --version)"
+	echo "images      $( [ -f port/wiiu/assets/icon.png ] && echo "port/wiiu/assets (not in the repository) md5 $(cat port/wiiu/assets/icon.png port/wiiu/assets/tv.png port/wiiu/assets/drc.png | md5sum | cut -d' ' -f1)" || echo port/wiiu/icons)"
 	echo "halou.rpx   sha256 $(sha256sum $OUT/halou.rpx | cut -d' ' -f1)"
 	echo "halou.wuhb  sha256 $(sha256sum $OUT/halou.wuhb | cut -d' ' -f1)  md5 $(md5sum $OUT/halou.wuhb | cut -d' ' -f1)  size $(stat -c %s $OUT/halou.wuhb)"
 	echo "shared code changed since the last BUILDINFO: see the commit's \"Shared code:\" line"

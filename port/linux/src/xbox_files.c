@@ -349,6 +349,10 @@ HANDLE WINAPI CreateFileA(LPCSTR file_name, DWORD desired_access, DWORD share_mo
 		flags = (flags & ~O_ACCMODE) | O_RDWR;
 	if ((flags & O_ACCMODE) == O_WRONLY && !(flags & (O_CREAT | O_TRUNC | O_APPEND)))
 		flags = (flags & ~O_ACCMODE) | O_RDWR;
+	/* OPEN_ALWAYS (O_CREAT alone): "r+" when the file is there, else "w+"
+	(an empty new file either way); no mode keeps the file and creates it */
+	if ((flags & O_CREAT) && !(flags & (O_TRUNC | O_APPEND | O_EXCL)))
+		flags = (flags & ~(O_CREAT | O_ACCMODE)) | O_RDWR | (existed ? 0 : O_CREAT | O_TRUNC);
 	if ((flags & O_TRUNC) && !(flags & O_CREAT))
 	{
 		/* TRUNCATE_EXISTING: only valid on a file that is already there */
@@ -604,6 +608,26 @@ DWORD WINAPI SetFilePointer(HANDLE handle, LONG distance, PLONG distance_high, D
 		SetLastError(ERROR_INVALID_PARAMETER);
 		return INVALID_SET_FILE_POINTER;
 	}
+#ifdef __WIIU__
+	/* port: the console's SD card cannot seek past the end of a file (Cemu
+	can; console run 1 halted making its first cache file, error 87): the
+	file is lengthened to the new position with zeros first, which the game
+	only does to size its cache files */
+	if (whence == SEEK_SET)
+	{
+		struct posix_file_information information;
+		unsigned long long target = ((unsigned long long)(unsigned long)(distance_high ? *distance_high : 0) << 32) |
+			(unsigned long)distance;
+
+		if (posix_fstat(file->descriptor, &information) == 0 &&
+			target > (((unsigned long long)information.size_high << 32) | information.size_low) &&
+			posix_truncate(file->descriptor, (unsigned long)target, (unsigned long)(target >> 32)) != 0)
+		{
+			platform_set_last_error_from_errno(errno);
+			return INVALID_SET_FILE_POINTER;
+		}
+	}
+#endif
 	if (posix_seek(file->descriptor, distance,
 		distance_high ? *distance_high : (distance < 0 ? -1 : 0), whence, &low, &high) != 0)
 	{

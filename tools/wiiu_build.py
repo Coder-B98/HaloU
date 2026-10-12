@@ -184,9 +184,13 @@ def main() -> int:
         # section, which elf2rpl has no place for; the Wii U's never is)
         n.rule("rpx", f"{DEVKITPRO}/devkitPPC/bin/powerpc-eabi-objcopy --remove-section .note.GNU-stack $in $out.elf"
                f" && {DEVKITPRO}/tools/bin/elf2rpl $out.elf $out", description="WIIU RPX $out")
+        # the icon and the launch images: the owner's own in port/wiiu/assets
+        # when there (kept out of the repository, like the game's data), else
+        # the ring drawn in port/wiiu/icons
+        IMAGES = "port/wiiu/assets" if Path("port/wiiu/assets/icon.png").exists() else "port/wiiu/icons"
         n.rule("wuhb", f"{DEVKITPRO}/tools/bin/wuhbtool $in $out --name=\"Halo U\" --short-name=\"Halo U\""
-               " --author=\"Halo U\" --icon=port/wiiu/icons/icon.png --tv-image=port/wiiu/icons/tv.png"
-               " --drc-image=port/wiiu/icons/drc.png", description="WIIU WUHB $out")
+               f" --author=\"Halo U\" --icon={IMAGES}/icon.png --tv-image={IMAGES}/tv.png"
+               f" --drc-image={IMAGES}/drc.png", description="WIIU WUHB $out")
         objects = []
         for source, flags in units:
             obj = OBJ / Path(source).with_suffix(".o")
@@ -196,7 +200,7 @@ def main() -> int:
         n.build(str(BUILD / "halou.elf"), "link", [str(o) for o in objects])
         n.build(str(BUILD / "halou.rpx"), "rpx", str(BUILD / "halou.elf"))
         n.build(str(BUILD / "halou.wuhb"), "wuhb", str(BUILD / "halou.rpx"),
-                implicit=[f"port/wiiu/icons/{image}.png" for image in ("icon", "tv", "drc")])
+                implicit=[f"{IMAGES}/{image}.png" for image in ("icon", "tv", "drc")])
         n.default(str(BUILD / "halou.wuhb"))
     print(f"wrote {BUILD / 'build.ninja'}: {len(units)} units, build {describe}")
     return 0

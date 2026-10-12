@@ -18,6 +18,7 @@ clip-space position again.
 */
 
 #include "xgpu.h"
+#include "port_config.h"
 
 #include <stdlib.h>
 
@@ -497,7 +498,10 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 		/* results are written only after both units have read their inputs */
 		if (mac == _mac_arl)
 		{
-			xgpu_text_append(&text, "\ta0 = int(floor(mac.x + 0.001));\n");
+			/* (debug.gpu_fixed_a0: every relative read takes the first
+			matrix, to tell whether indexing the constants is what fails) */
+			xgpu_text_append(&text, config_boolean("debug.gpu_fixed_a0") ? "\ta0 = 0;\n" :
+				"\ta0 = int(floor(mac.x + 0.001));\n");
 		}
 		else if (mac != _mac_nop && mac_mask)
 		{

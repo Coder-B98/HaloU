@@ -608,6 +608,9 @@ static struct
 	/* debug.gpu_skip_immediate: no immediate draws (menus, text), to see
 	the 3D world behind them */
 	BOOL skip_immediate;
+	/* debug.gpu_probe_raster_off: vertex buffer draws without culling,
+	depth test or scissor */
+	BOOL probe_raster_off;
 	const char *dump_shaders;
 	BOOL statistics;
 } debug_settings;
@@ -1597,6 +1600,7 @@ static void gl_initialize(void)
 	memory_watch_initialize();
 	debug_settings.skip_vertex_shaders = config_string("debug.gpu_skip_vertex_shaders");
 	debug_settings.skip_immediate = config_boolean("debug.gpu_skip_immediate");
+	debug_settings.probe_raster_off = config_boolean("debug.gpu_probe_raster_off");
 	debug_settings.dump_shaders = *config_string("debug.gpu_dump_shaders") ?
 		config_string("debug.gpu_dump_shaders") : NULL;
 	debug_settings.statistics = config_boolean("debug.gpu_stats");
@@ -3405,6 +3409,12 @@ static struct program_entry *prepare_draw(BOOL immediate)
 		return NULL;
 	}
 	apply_raster_state(has_depth);
+	if (debug_settings.probe_raster_off && !immediate)
+	{
+		state_enable(&gl_state.cull_face, GL_CULL_FACE, FALSE);
+		state_enable(&gl_state.depth_test, GL_DEPTH_TEST, FALSE);
+		state_enable(&gl_state.scissor_test, GL_SCISSOR_TEST, FALSE);
+	}
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		key.alpha_kill[stage] = D3D__TextureState[stage][D3DTSS_ALPHAKILL] == D3DTALPHAKILL_ENABLE;

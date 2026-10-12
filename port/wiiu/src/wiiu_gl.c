@@ -2911,6 +2911,7 @@ static void GL_APIENTRY wiiu_glCompileShader(GLuint name)
 	int pixel;
 	char *source;
 	GX2ShaderMode mode;
+	int attempt;
 
 	if (!shader || !shader->source)
 		return;
@@ -2926,39 +2927,19 @@ static void GL_APIENTRY wiiu_glCompileShader(GLuint name)
 		mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
 			GLSL_COMPILER_FLAG_NONE);
 	shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
-	/* (DEBUGGING, TEMPORARY: the intro's shaders came out empty, 16 bytes
-	with no inputs, while the menu's compiled later are whole. Each compile
-	logged, and an empty one tried again once, to see whether a second try
-	gives the whole shader.) */
-	if (config_integer("debug.gpu_trace_frame") >= 0)
+	/* CafeGLSL now and then hands back an empty shell for a whole vertex
+	shader: 16 bytes, no inputs, no uniforms, with no error (the game's very
+	first one, compiled as the intro starts; r18 and r19). A vertex shader
+	of the game's always reads an input, so one with none is compiled again;
+	the second try has come back whole. */
+	for (attempt = 0; attempt < 2 && shader->compiled && !pixel && !shader->vertex->attribVarCount; attempt++)
 	{
-		unsigned int size = !shader->compiled ? 0 : pixel ? shader->pixel->size : shader->vertex->size;
-		int attempt;
-
-		platform_log("GX2 compile: shader %u (%s): mode %d, %u bytes, %u inputs/samplers, %u uniforms; log \"%s\"",
-			name, pixel ? "pixel" : "vertex", (int)mode, size,
-			!shader->compiled ? 0 : pixel ? shader->pixel->samplerVarCount : shader->vertex->attribVarCount,
-			!shader->compiled ? 0 : pixel ? shader->pixel->uniformVarCount : shader->vertex->uniformVarCount,
-			shader->log);
-		for (attempt = 0; attempt < 1 && shader->compiled && size <= 16; attempt++)
-		{
-			log_free_memory("at an empty shader");
-			log_stack("at an empty shader");
-			shader->log[0] = 0;
-			if (pixel)
-				mode = CompilePixelShader(source, GLSL_COMPILE_REGISTER, &shader->pixel, shader->log,
-					sizeof(shader->log), GLSL_COMPILER_FLAG_NONE);
-			else
-				mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log,
-					sizeof(shader->log), GLSL_COMPILER_FLAG_NONE);
-			shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
-			size = !shader->compiled ? 0 : pixel ? shader->pixel->size : shader->vertex->size;
-			platform_log("GX2 compile: shader %u again: mode %d, %u bytes, %u inputs/samplers, %u uniforms; log \"%s\"",
-				name, (int)mode, size,
-				!shader->compiled ? 0 : pixel ? shader->pixel->samplerVarCount : shader->vertex->attribVarCount,
-				!shader->compiled ? 0 : pixel ? shader->pixel->uniformVarCount : shader->vertex->uniformVarCount,
-				shader->log);
-		}
+		platform_log("GX2: vertex shader %u came back empty (%u bytes); compiling it again", name,
+			(unsigned)shader->vertex->size);
+		shader->log[0] = 0;
+		mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
+			GLSL_COMPILER_FLAG_NONE);
+		shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
 	}
 	free(source);
 	/* the GPU reads the compiled code from memory, past the CPU's cache */

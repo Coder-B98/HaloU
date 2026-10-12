@@ -2925,8 +2925,42 @@ static void GL_APIENTRY wiiu_glCompileShader(GLuint name)
 	else
 		mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
 			GLSL_COMPILER_FLAG_NONE);
-	free(source);
 	shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
+	/* (DEBUGGING, TEMPORARY: the intro's shaders came out empty, 16 bytes
+	with no inputs, while the menu's compiled later are whole. Each compile
+	logged, and an empty one tried again once, to see whether a second try
+	gives the whole shader.) */
+	if (config_integer("debug.gpu_trace_frame") >= 0)
+	{
+		unsigned int size = !shader->compiled ? 0 : pixel ? shader->pixel->size : shader->vertex->size;
+		int attempt;
+
+		platform_log("GX2 compile: shader %u (%s): mode %d, %u bytes, %u inputs/samplers, %u uniforms; log \"%s\"",
+			name, pixel ? "pixel" : "vertex", (int)mode, size,
+			!shader->compiled ? 0 : pixel ? shader->pixel->samplerVarCount : shader->vertex->attribVarCount,
+			!shader->compiled ? 0 : pixel ? shader->pixel->uniformVarCount : shader->vertex->uniformVarCount,
+			shader->log);
+		for (attempt = 0; attempt < 1 && shader->compiled && size <= 16; attempt++)
+		{
+			log_free_memory("at an empty shader");
+			log_stack("at an empty shader");
+			shader->log[0] = 0;
+			if (pixel)
+				mode = CompilePixelShader(source, GLSL_COMPILE_REGISTER, &shader->pixel, shader->log,
+					sizeof(shader->log), GLSL_COMPILER_FLAG_NONE);
+			else
+				mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log,
+					sizeof(shader->log), GLSL_COMPILER_FLAG_NONE);
+			shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
+			size = !shader->compiled ? 0 : pixel ? shader->pixel->size : shader->vertex->size;
+			platform_log("GX2 compile: shader %u again: mode %d, %u bytes, %u inputs/samplers, %u uniforms; log \"%s\"",
+				name, (int)mode, size,
+				!shader->compiled ? 0 : pixel ? shader->pixel->samplerVarCount : shader->vertex->attribVarCount,
+				!shader->compiled ? 0 : pixel ? shader->pixel->uniformVarCount : shader->vertex->uniformVarCount,
+				shader->log);
+		}
+	}
+	free(source);
 	/* the GPU reads the compiled code from memory, past the CPU's cache */
 	if (shader->compiled && pixel)
 		GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, shader->pixel->program, shader->pixel->size);

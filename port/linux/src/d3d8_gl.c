@@ -605,6 +605,9 @@ static struct
 	/* debug.gpu_skip_vertex_shaders "<id>,<id>..." drops draws by vertex
 	shader, for finding which pass produces something (port_config.c) */
 	const char *skip_vertex_shaders;
+	/* debug.gpu_skip_immediate: no immediate draws (menus, text), to see
+	the 3D world behind them */
+	BOOL skip_immediate;
 	const char *dump_shaders;
 	BOOL statistics;
 } debug_settings;
@@ -1593,6 +1596,7 @@ static void gl_initialize(void)
 	}
 	memory_watch_initialize();
 	debug_settings.skip_vertex_shaders = config_string("debug.gpu_skip_vertex_shaders");
+	debug_settings.skip_immediate = config_boolean("debug.gpu_skip_immediate");
 	debug_settings.dump_shaders = *config_string("debug.gpu_dump_shaders") ?
 		config_string("debug.gpu_dump_shaders") : NULL;
 	debug_settings.statistics = config_boolean("debug.gpu_stats");
@@ -4460,7 +4464,7 @@ void WINAPI D3DDevice_End(void)
 	D3DPRIMITIVETYPE type = device.immediate_type;
 
 	device.immediate_active = FALSE;
-	if (!count || !prepare_draw(TRUE))
+	if (!count || debug_settings.skip_immediate || !prepare_draw(TRUE))
 		return;
 	trace_draw("immediate", type, count, device.immediate_vertices);
 	offset = stream_upload(device.immediate_vertices, count * stride);

@@ -1943,14 +1943,55 @@ static void GL_APIENTRY wiiu_glPixelStorei(GLenum name, GLint value)
 	(void)value;
 }
 
+/* The read framebuffer's pixels, as 32-bit RGBA (only what the renderer's
+screenshots ask for): the GPU copies its tiled colour buffer into a linear
+one, and the CPU reads that once the GPU is done. Rows come out as they are
+in the buffer. */
 static void GL_APIENTRY wiiu_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format,
 	GLenum type, void *pixels)
 {
-	static int said;
+	struct draw_targets targets;
+	GX2Surface *source;
+	GX2Surface staging;
+	GX2Rect rectangle;
+	GX2Point point = { 0, 0 };
+	GLsizei row;
 
-	(void)x; (void)y; (void)format; (void)type;
-	log_once(&said, "glReadPixels is not supported (screenshots read black)");
+	(void)format; (void)type;
 	memset(pixels, 0, (size_t)width * (size_t)height * 4);
+	if (!video_ready || width <= 0 || height <= 0 || !targets_get(gl.read_framebuffer, &targets) ||
+		!targets.color)
+		return;
+	source = &targets.color->surface;
+	if (x < 0 || y < 0 || (uint32_t)(x + width) > source->width || (uint32_t)(y + height) > source->height)
+		return;
+	memset(&staging, 0, sizeof(staging));
+	staging.dim = GX2_SURFACE_DIM_TEXTURE_2D;
+	staging.width = (uint32_t)width;
+	staging.height = (uint32_t)height;
+	staging.depth = 1;
+	staging.mipLevels = 1;
+	staging.format = source->format;
+	staging.aa = GX2_AA_MODE1X;
+	staging.use = GX2_SURFACE_USE_TEXTURE;
+	staging.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
+	GX2CalcSurfaceSizeAndAlignment(&staging);
+	staging.image = gpu_alloc(staging.alignment, staging.imageSize);
+	if (!staging.image)
+		return;
+	rectangle.left = x;
+	rectangle.top = y;
+	rectangle.right = x + width;
+	rectangle.bottom = y + height;
+	GX2CopySurfaceEx(source, targets.color->viewMip, targets.color->viewFirstSlice, &staging, 0, 0, 1,
+		&rectangle, &point);
+	GX2DrawDone();
+	DCInvalidateRange(staging.image, staging.imageSize);
+	for (row = 0; row < height; row++)
+		memcpy((unsigned char *)pixels + (size_t)row * (size_t)width * 4,
+			(const unsigned char *)staging.image + (size_t)row * staging.pitch * 4, (size_t)width * 4);
+	gpu_free(staging.image);
+	internal_done();
 }
 
 static void GL_APIENTRY wiiu_glFinish(void)

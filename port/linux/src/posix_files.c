@@ -42,6 +42,21 @@ static void fill_information(const struct stat *st, struct posix_file_informatio
 int posix_stat(const char *path, struct posix_file_information *information)
 {
 	struct stat st;
+#ifdef __WIIU__
+	/* the console's SD card can't stat "maps/" with the slash on the end
+	(Cemu can, inferred from console run 3), and the game checks its map
+	folder as "d:\\maps\\", so drop trailing slashes first */
+	char trimmed[1024];
+	size_t length = strlen(path);
+
+	if (length > 1 && path[length - 1] == '/' && length < sizeof(trimmed))
+	{
+		memcpy(trimmed, path, length + 1);
+		while (length > 1 && trimmed[length - 1] == '/' && trimmed[length - 2] != ':')
+			trimmed[--length] = 0;
+		path = trimmed;
+	}
+#endif
 
 	if (stat(path, &st) != 0)
 		return -1;

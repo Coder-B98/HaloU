@@ -141,6 +141,9 @@ struct nv2a_pixel_shader_key
 	proportion to how far alpha is past the reference, not all of the pixel
 	or none of it, so that cut-out edges (foliage, grates) are smoothed too */
 	unsigned char alpha_test_samples;
+	/* debug.gpu_debug_expression shows in this draw: only the vertex
+	buffer draws (the 3D world), not the immediate ones (menus, text) */
+	unsigned char debug_probe;
 };
 
 char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key);

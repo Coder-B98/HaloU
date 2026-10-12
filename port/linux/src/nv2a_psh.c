@@ -728,7 +728,7 @@ char *nv2a_pixel_shader_to_glsl(const struct nv2a_pixel_shader_key *key)
 			xgpu_text_append(&text, "\tif (!(floor(clamp(result.a, 0.0, 1.0) * 255.0 + 0.5) %s alpha_reference)) discard;\n", comparison);
 		}
 	}
-	if (*config_string("debug.gpu_debug_expression"))
+	if (key->debug_probe)
 		xgpu_text_append(&text, "\tresult = vec4(vec3(%s), 1.0);\n", config_string("debug.gpu_debug_expression"));
 	if (config_boolean("debug.gpu_debug_texture0"))
 		xgpu_text_append(&text, "\tresult = vec4(t0.rgb, 1.0);\n");

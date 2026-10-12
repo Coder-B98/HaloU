@@ -3416,6 +3416,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	if (target_samples > 1 && key.alpha_test_function && !D3D__RenderState[D3DRS_ALPHABLENDENABLE])
 		key.alpha_test_samples = (unsigned char)target_samples;
 #endif
+	key.debug_probe = *config_string("debug.gpu_debug_expression") && !immediate;
 	key.fog_enable = D3D__RenderState[D3DRS_FOGENABLE] != 0;
 	key.fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 #ifdef HALO_GLES

@@ -72,6 +72,8 @@ declares them without renaming the calls */
 
 /* the game's log (port/linux/src/platform.h) */
 void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)));
+/* (port/linux/src/port_config.h) */
+long config_integer(const char *name);
 
 /* the screen: what the renderer is told it draws into (the game's picture
 is letterboxed into it at presentation) */
@@ -1468,6 +1470,96 @@ static void state_apply(const struct draw_targets *targets)
 	gl.dirty = 0;
 }
 
+/* port (debugging, temporary): debug.gpu_trace_frame also logs, for each
+draw of that frame (counted here in presented frames), the state this
+layer gives GX2 */
+static unsigned long presented_frames;
+static long trace_frame_number = -2;
+
+static int tracing(void)
+{
+	if (trace_frame_number == -2)
+		trace_frame_number = config_integer("debug.gpu_trace_frame");
+	return trace_frame_number >= 0 && presented_frames == (unsigned long)trace_frame_number;
+}
+
+static void trace_state(const struct gl_program *program, const struct draw_targets *targets)
+{
+	unsigned int index;
+
+	platform_log("GX2 draw: program %u linked %d, target %ux%u screen %d color %p depth %p, viewport %d,%d %dx%d "
+		"range %g-%g, scissor %d %d,%d %dx%d", gl.program, program->linked, targets->width, targets->height,
+		targets->screen, (void *)targets->color, (void *)targets->depth, gl.viewport[0], gl.viewport[1],
+		gl.viewport[2], gl.viewport[3], gl.depth_range[0], gl.depth_range[1], gl.scissor_test, gl.scissor[0],
+		gl.scissor[1], gl.scissor[2], gl.scissor[3]);
+	platform_log("GX2 draw:   depth test %d mask %d func %04x, stencil %d, blend %d %04x/%04x eq %04x, "
+		"color mask %d%d%d%d, cull %d mode %04x front %04x, offset %d",
+		gl.depth_test, gl.depth_mask, gl.depth_function, gl.stencil_test, gl.blend, gl.blend_source,
+		gl.blend_destination, gl.blend_equation, gl.color_mask[0], gl.color_mask[1], gl.color_mask[2],
+		gl.color_mask[3], gl.cull_face, gl.cull_mode, gl.front_face, gl.polygon_offset_fill);
+	for (index = 0; index < program->vertex->attribVarCount; index++)
+	{
+		const GX2AttribVar *variable = &program->vertex->attribVars[index];
+		const struct attribute *attribute = variable->location < ATTRIBUTE_COUNT ?
+			&gl.attributes[variable->location] : NULL;
+		struct gl_buffer *buffer = attribute && attribute->enabled ? name_get(&buffers, attribute->buffer) : NULL;
+
+		if (!attribute)
+			continue;
+		if (buffer && buffer->data && attribute->offset + 16 <= buffer->size)
+		{
+			const float *first = (const float *)(buffer->data + attribute->offset);
+
+			platform_log("GX2 draw:   %s at %u: buffer %u size %lu offset %lu stride %d, type %04x x%d, first %g %g %g %g",
+				variable->name, variable->location, attribute->buffer, buffer->size, attribute->offset,
+				attribute->stride, attribute->type, attribute->size, first[0], first[1], first[2], first[3]);
+		}
+		else
+		{
+			platform_log("GX2 draw:   %s at %u: enabled %d buffer %u (none usable), value %g %g %g %g",
+				variable->name, variable->location, attribute->enabled, attribute->buffer, attribute->value[0],
+				attribute->value[1], attribute->value[2], attribute->value[3]);
+		}
+	}
+	for (index = 0; index < program->uniform_count; index++)
+	{
+		const struct uniform_entry *uniform = &program->uniforms[index];
+
+		if (uniform->sampler)
+			continue;
+		if (uniform->vertex_offset >= 0)
+		{
+			const float *value = program->vertex_registers + uniform->vertex_offset;
+
+			platform_log("GX2 draw:   vs %s at %d x%u: %g %g %g %g", uniform->name, uniform->vertex_offset,
+				uniform->count, value[0], value[1], value[2], value[3]);
+			if (!strcmp(uniform->name, "c"))
+			{
+				static const unsigned int shown[] = { 28, 29, 30, 31, 58, 59 };
+				unsigned int element;
+
+				for (element = 0; element < sizeof(shown) / sizeof(shown[0]); element++)
+				{
+					if (shown[element] < uniform->count)
+					{
+						value = program->vertex_registers + uniform->vertex_offset + shown[element] * 4;
+						platform_log("GX2 draw:     c[%u] = %g %g %g %g", shown[element], value[0], value[1],
+							value[2], value[3]);
+					}
+				}
+			}
+		}
+		if (uniform->pixel_offset >= 0)
+		{
+			const float *value = program->pixel_registers + uniform->pixel_offset;
+
+			platform_log("GX2 draw:   ps %s at %d x%u: %g %g %g %g", uniform->name, uniform->pixel_offset,
+				uniform->count, value[0], value[1], value[2], value[3]);
+		}
+	}
+	platform_log("GX2 draw:   registers vs %u ps %u", program->vertex_register_count, program->pixel_register_count);
+}
+
 /* everything a draw of the current program needs set; FALSE: draw nothing */
 static int draw_prepare(void)
 {
@@ -1475,9 +1567,20 @@ static int draw_prepare(void)
 	struct draw_targets targets;
 
 	if (!video_ready || !program || !program->linked)
+	{
+		if (tracing())
+			platform_log("GX2 draw: skipped: ready %d program %u %s", video_ready, gl.program,
+				program ? "not linked" : "missing");
 		return 0;
+	}
 	if (!targets_get(gl.draw_framebuffer, &targets))
+	{
+		if (tracing())
+			platform_log("GX2 draw: skipped: no targets for framebuffer %u", gl.draw_framebuffer);
 		return 0;
+	}
+	if (tracing())
+		trace_state(program, &targets);
 	state_apply(&targets);
 	GX2SetVertexShader(program->vertex);
 	GX2SetPixelShader(program->pixel);
@@ -2650,6 +2753,8 @@ static void GL_APIENTRY wiiu_glDrawArrays(GLenum mode, GLint first, GLsizei coun
 {
 	if (count <= 0 || !draw_prepare())
 		return;
+	if (tracing())
+		platform_log("GX2 draw: arrays mode %04x count %d first %d", mode, count, first);
 	GX2DrawEx(primitive_mode(mode), (uint32_t)count, (uint32_t)first, 1);
 }
 
@@ -3342,6 +3447,7 @@ void platform_video_swap(void)
 	current_depth = NULL;
 	internal_done();
 	GX2Invalidate(GX2_INVALIDATE_MODE_ATTRIBUTE_BUFFER, (void *)0, 0xffffffff);
+	presented_frames++;
 	gpu_free_collect();
 }
 

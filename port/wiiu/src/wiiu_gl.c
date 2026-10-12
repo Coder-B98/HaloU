@@ -74,6 +74,7 @@ declares them without renaming the calls */
 void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)));
 /* (port/linux/src/port_config.h) */
 long config_integer(const char *name);
+int config_boolean(const char *name);
 
 /* the screen: what the renderer is told it draws into (the game's picture
 is letterboxed into it at presentation) */
@@ -408,6 +409,15 @@ of per-frame parts that are reused only once their frame is done */
 #define CONSTANT_RING_PART 0x40000
 static unsigned char *constant_ring;
 static unsigned long constant_ring_part, constant_ring_offset;
+
+/* the game's uniforms when its shaders use uniform blocks
+(debug.gpu_uniform_blocks): a copy for each change, in a ring of per-frame
+parts like the attribute values' */
+#define BLOCK_RING_PART 0x200000
+static unsigned char *block_ring;
+static unsigned long block_ring_offset;
+static int uniform_blocks;
+static GX2ShaderMode shader_mode = GX2_SHADER_MODE_UNIFORM_REGISTER;
 
 static void internal_programs_initialize(void);
 
@@ -1029,6 +1039,48 @@ static void targets_bind(const struct draw_targets *targets)
 
 /* ---------- uniform registers */
 
+static void shader_mode_set(GX2ShaderMode mode)
+{
+	if (shader_mode != mode)
+	{
+		shader_mode = mode;
+		GX2SetShaderMode(mode);
+	}
+}
+
+/* a stage's uniforms copied as its uniform block: Latte reads blocks in
+little-endian words */
+static void block_load(const GX2UniformBlock *blocks, unsigned int block_count, const float *registers,
+	unsigned int register_count, int pixel)
+{
+	unsigned int index, word;
+
+	for (index = 0; index < block_count; index++)
+	{
+		uint32_t size = blocks[index].size, *copy;
+		const uint32_t *source = (const uint32_t *)registers;
+
+		if (!size)
+			continue;
+		if (!block_ring || block_ring_offset + size > BLOCK_RING_PART)
+		{
+			static int said;
+
+			log_once(&said, "the ring for uniform blocks is full");
+			return;
+		}
+		copy = (uint32_t *)(block_ring + constant_ring_part * BLOCK_RING_PART + block_ring_offset);
+		block_ring_offset += (size + GX2_UNIFORM_BLOCK_ALIGNMENT - 1) & ~(GX2_UNIFORM_BLOCK_ALIGNMENT - 1);
+		for (word = 0; word < size / 4; word++)
+			copy[word] = word >= register_count ? 0 : uniform_blocks > 1 ? source[word] : __builtin_bswap32(source[word]);
+		GX2Invalidate((GX2InvalidateMode)(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_UNIFORM_BLOCK), copy, size);
+		if (pixel)
+			GX2SetPixelUniformBlock(blocks[index].offset, size, copy);
+		else
+			GX2SetVertexUniformBlock(blocks[index].offset, size, copy);
+	}
+}
+
 static void registers_mark(struct gl_program *program, int pixel, unsigned int first, unsigned int count)
 {
 	unsigned int *dirty_first = pixel ? &program->pixel_dirty_first : &program->vertex_dirty_first;
@@ -1052,7 +1104,16 @@ static void registers_load(struct gl_program *program)
 		program->pixel_dirty_first = 0;
 		program->pixel_dirty_last = program->pixel_register_count;
 	}
-	if (program->vertex_dirty_last > program->vertex_dirty_first)
+	if (program->vertex->mode == GX2_SHADER_MODE_UNIFORM_BLOCK)
+	{
+		if (program->vertex_dirty_last > program->vertex_dirty_first)
+			block_load(program->vertex->uniformBlocks, program->vertex->uniformBlockCount,
+				program->vertex_registers, program->vertex_register_count, 0);
+		if (program->pixel_dirty_last > program->pixel_dirty_first)
+			block_load(program->pixel->uniformBlocks, program->pixel->uniformBlockCount,
+				program->pixel_registers, program->pixel_register_count, 1);
+	}
+	else if (program->vertex_dirty_last > program->vertex_dirty_first)
 	{
 		/* (whole registers, four floats each) */
 		unsigned int first = program->vertex_dirty_first & ~3u;
@@ -1060,7 +1121,7 @@ static void registers_load(struct gl_program *program)
 
 		GX2SetVertexUniformReg(first, last - first, program->vertex_registers + first);
 	}
-	if (program->pixel_dirty_last > program->pixel_dirty_first)
+	if (program->pixel->mode != GX2_SHADER_MODE_UNIFORM_BLOCK && program->pixel_dirty_last > program->pixel_dirty_first)
 	{
 		unsigned int first = program->pixel_dirty_first & ~3u;
 		unsigned int last = (program->pixel_dirty_last + 3) & ~3u;
@@ -1599,6 +1660,7 @@ static int draw_prepare(void)
 	if (tracing())
 		trace_state(program, &targets);
 	state_apply(&targets);
+	shader_mode_set(program->vertex->mode);
 	GX2SetVertexShader(program->vertex);
 	GX2SetPixelShader(program->pixel);
 	registers_load(program);
@@ -1632,6 +1694,7 @@ static void internal_rectangle(struct internal_program *program, const float rec
 	float values[4];
 
 	GX2SetFetchShader(&program->fetch);
+	shader_mode_set(GX2_SHADER_MODE_UNIFORM_REGISTER);
 	GX2SetVertexShader(program->vertex);
 	GX2SetPixelShader(program->pixel);
 	if (program->rectangle >= 0)
@@ -2991,10 +3054,10 @@ static void GL_APIENTRY wiiu_glCompileShader(GLuint name)
 		return;
 	shader->log[0] = 0;
 	if (pixel)
-		mode = CompilePixelShader(source, GLSL_COMPILE_REGISTER, &shader->pixel, shader->log, sizeof(shader->log),
+		mode = CompilePixelShader(source, uniform_blocks ? GLSL_COMPILE_BLOCK : GLSL_COMPILE_REGISTER, &shader->pixel, shader->log, sizeof(shader->log),
 			GLSL_COMPILER_FLAG_NONE);
 	else
-		mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
+		mode = CompileVertexShader(source, uniform_blocks ? GLSL_COMPILE_BLOCK : GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
 			GLSL_COMPILER_FLAG_NONE);
 	shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
 	/* CafeGLSL now and then hands back an empty shell for a whole vertex
@@ -3007,7 +3070,7 @@ static void GL_APIENTRY wiiu_glCompileShader(GLuint name)
 		platform_log("GX2: vertex shader %u came back empty (%u bytes); compiling it again", name,
 			(unsigned)shader->vertex->size);
 		shader->log[0] = 0;
-		mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
+		mode = CompileVertexShader(source, uniform_blocks ? GLSL_COMPILE_BLOCK : GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
 			GLSL_COMPILER_FLAG_NONE);
 		shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
 	}
@@ -3419,6 +3482,7 @@ void host_gl_wait_frame(unsigned int slot)
 	/* (the attribute values' ring follows the same frames) */
 	constant_ring_part = slot;
 	constant_ring_offset = 0;
+	block_ring_offset = 0;
 }
 
 /* ---------- the platform's video (sdl_platform.h) */
@@ -3468,6 +3532,15 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 	GX2InitColorBufferRegs(&screen);
 	screen.surface.image = gpu_alloc(screen.surface.alignment, screen.surface.imageSize);
 	constant_ring = gpu_alloc(0x100, CONSTANT_RING_PART * FENCE_SLOTS);
+	uniform_blocks = config_boolean("debug.gpu_uniform_blocks");
+	/* (debug.gpu_uniform_blocks_unswapped: the copies in the CPU's order) */
+	if (uniform_blocks && config_boolean("debug.gpu_uniform_blocks_unswapped"))
+		uniform_blocks = 2;
+	if (uniform_blocks)
+	{
+		block_ring = gpu_alloc(GX2_UNIFORM_BLOCK_ALIGNMENT, BLOCK_RING_PART * FENCE_SLOTS);
+		platform_log("GX2: the game's shaders use uniform blocks%s", block_ring ? "" : " (no memory for them)");
+	}
 	if (!screen.surface.image || !constant_ring)
 		return 0;
 	memset(screen.surface.image, 0, screen.surface.imageSize);

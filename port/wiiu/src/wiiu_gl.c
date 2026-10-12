@@ -1480,7 +1480,9 @@ static int tracing(void)
 {
 	if (trace_frame_number == -2)
 		trace_frame_number = config_integer("debug.gpu_trace_frame");
-	return trace_frame_number >= 0 && presented_frames == (unsigned long)trace_frame_number;
+	/* (and 400 frames later, by when the intro has given way to the menu) */
+	return trace_frame_number >= 0 && (presented_frames == (unsigned long)trace_frame_number ||
+		presented_frames == (unsigned long)trace_frame_number + 400);
 }
 
 static void trace_state(const struct gl_program *program, const struct draw_targets *targets)
@@ -1557,7 +1559,11 @@ static void trace_state(const struct gl_program *program, const struct draw_targ
 				uniform->count, value[0], value[1], value[2], value[3]);
 		}
 	}
-	platform_log("GX2 draw:   registers vs %u ps %u", program->vertex_register_count, program->pixel_register_count);
+	platform_log("GX2 draw:   registers vs %u ps %u; vertex shader %p: %u attributes, %u uniforms, %u bytes; "
+		"pixel shader %p: %u uniforms, %u samplers", program->vertex_register_count, program->pixel_register_count,
+		(void *)program->vertex, program->vertex->attribVarCount, program->vertex->uniformVarCount,
+		program->vertex->size, (void *)program->pixel, program->pixel->uniformVarCount,
+		program->pixel->samplerVarCount);
 }
 
 /* everything a draw of the current program needs set; FALSE: draw nothing */
@@ -3097,6 +3103,14 @@ static void GL_APIENTRY wiiu_glLinkProgram(GLuint name)
 	program->vertex_dirty_first = program->pixel_dirty_first = ~0u;
 	program->vertex_dirty_last = program->pixel_dirty_last = 0;
 	program->linked = 1;
+	/* (DEBUGGING, TEMPORARY: what each program's compiled shaders hold) */
+	if (config_integer("debug.gpu_trace_frame") >= 0)
+		platform_log("GX2 link: program %u: vertex shader %u at %p: %u attributes, %u uniforms, %u bytes, "
+			"%u registers; pixel shader %u at %p: %u uniforms, %u samplers, %u registers", name,
+			program->vertex_name, (void *)program->vertex, program->vertex->attribVarCount,
+			program->vertex->uniformVarCount, program->vertex->size, program->vertex_register_count,
+			program->pixel_name, (void *)program->pixel, program->pixel->uniformVarCount,
+			program->pixel->samplerVarCount, program->pixel_register_count);
 	if (registers_program == program)
 		registers_program = NULL;
 }

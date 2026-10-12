@@ -436,6 +436,8 @@ static const struct config_setting config_settings[] =
 		"Draw the vertex buffer draws (the 3D world) without culling, depth test or scissor." },
 	{ "debug.gpu_fixed_a0", _config_boolean, "false", "HALO_GPU_FIXED_A0", _environment_set_is_true, _platform_all,
 		"Vertex shaders read the first matrix wherever they index the constants (skinning)." },
+	{ "debug.gpu_vs_debug_inputs", _config_boolean, "false", "HALO_GPU_VS_DEBUG_INPUTS", _environment_set_is_true, _platform_all,
+		"Skinned vertex shaders colour their vertices by their node bytes and an indexed constant read." },
 	{ "debug.gpu_dump_shaders", _config_string, "\"\"", "HALO_GPU_DUMP_SHADERS", _environment_value, _platform_all,
 		"A folder to write the generated GLSL to; empty none." },
 	{ "debug.gpu_debug_expression", _config_string, "\"\"", "HALO_GPU_DEBUG_EXPR", _environment_value, _platform_all,

@@ -21,6 +21,7 @@ clip-space position again.
 #include "port_config.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 /* ---------- instruction fields */
 
@@ -534,6 +535,16 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 			break;
 	}
 
+	/* (debug.gpu_vs_debug_inputs, with the skinned shaders' layout: the
+	colour shows the first node byte, the second, and whether reading the
+	constants by an index the GPU computes gives what reading them directly
+	does) */
+	if (config_boolean("debug.gpu_vs_debug_inputs") && strstr(text.buffer, "c[clamp(a0"))
+		xgpu_text_append(&text,
+			"\t{\n"
+			"\t\tint debug_index = int(floor(v5.x * c[7].w + 0.001));\n"
+			"\t\toD0 = vec4(v5.x, v5.y, c[clamp(debug_index + 60, 0, %d)] == c[60] ? 1.0 : 0.0, 1.0);\n"
+			"\t}\n", XGPU_VERTEX_CONSTANT_COUNT - 1);
 	xgpu_text_append(&text,
 		"\t/* undo the screen-space conversion done with c[-38] and c[-37] */\n"
 		"\tvec3 scale = vec3(viewport_scale.x != 0.0 ? viewport_scale.x : 1.0,\n"

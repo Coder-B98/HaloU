@@ -140,7 +140,9 @@ static void operand(struct xgpu_text *text, const DWORD *instruction, char which
 		xgpu_text_append(text, "v%lu", field(instruction, 1, 9, 4));
 		break;
 	case _mux_constant:
-		if (relative)
+		if (relative && config_boolean("debug.gpu_relative_guard"))
+			xgpu_text_append(text, "relative_constant(a0 + %lu)", field(instruction, 1, 13, 8));
+		else if (relative)
 			xgpu_text_append(text, "c[clamp(a0 + %lu, 0, %d)]", field(instruction, 1, 13, 8), XGPU_VERTEX_CONSTANT_COUNT - 1);
 		else
 			xgpu_text_append(text, "c[%lu]", field(instruction, 1, 13, 8));
@@ -408,6 +410,11 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 			xgpu_text_append(&text, "layout(location = %lu) in vec4 v%lu_in;\n", index, index);
 	}
 
+	/* (debug.gpu_relative_guard: an index outside the constants reads zero
+	instead of the nearest one) */
+	if (config_boolean("debug.gpu_relative_guard"))
+		xgpu_text_append(&text, "vec4 relative_constant(int index)\n{\n"
+			"\treturn index >= 0 && index < %d ? c[index] : vec4(0.0);\n}\n", XGPU_VERTEX_CONSTANT_COUNT);
 	xgpu_text_append(&text, "void main()\n{\n");
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
@@ -542,9 +549,11 @@ char *nv2a_vertex_shader_to_glsl(const DWORD *instructions, unsigned long instru
 	if (config_boolean("debug.gpu_vs_debug_inputs") && strstr(text.buffer, "c[clamp(a0"))
 		xgpu_text_append(&text,
 			"\t{\n"
-			"\t\tint debug_index = int(floor(v5.x * c[7].w + 0.001));\n"
-			"\t\toD0 = vec4(v5.x, v5.y, c[clamp(debug_index + 60, 0, %d)] == c[60] ? 1.0 : 0.0, 1.0);\n"
-			"\t}\n", XGPU_VERTEX_CONSTANT_COUNT - 1);
+			"\t\tint debug_index = clamp(int(floor(v5.y * c[7].w + 0.001)) + 60, 0, %d);\n"
+			"\t\tvec4 debug_value = c[debug_index];\n"
+			"\t\toD0 = vec4(float(debug_index) / 255.0, any(isnan(debug_value)) || any(isinf(debug_value)) ? 1.0 : 0.0,\n"
+			"\t\t\tdebug_value == c[%d] ? 1.0 : 0.0, 1.0);\n"
+			"\t}\n", XGPU_VERTEX_CONSTANT_COUNT - 1, XGPU_VERTEX_CONSTANT_COUNT - 1);
 	xgpu_text_append(&text,
 		"\t/* undo the screen-space conversion done with c[-38] and c[-37] */\n"
 		"\tvec3 scale = vec3(viewport_scale.x != 0.0 ? viewport_scale.x : 1.0,\n"

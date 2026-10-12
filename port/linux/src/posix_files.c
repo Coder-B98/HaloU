@@ -91,7 +91,32 @@ int posix_seek(int descriptor, posix_long offset_low, posix_long offset_high, in
 
 int posix_truncate(int descriptor, posix_ulong size_low, posix_ulong size_high)
 {
-	return ftruncate(descriptor, (off_t)(((unsigned long long)size_high << 32) | size_low));
+	off_t size = (off_t)(((unsigned long long)size_high << 32) | size_low);
+#ifdef __WIIU__
+	/* the console's SD card can only shorten a file with ftruncate (Cemu
+	lengthens it too): a longer file is written out with zeros, keeping the
+	file position (the game's cache files are made at a map's size) */
+	struct stat information;
+
+	if (fstat(descriptor, &information) == 0 && size > information.st_size)
+	{
+		static char zeros[0x10000];
+		off_t position = lseek(descriptor, 0, SEEK_CUR), left;
+
+		if (position == (off_t)-1 || lseek(descriptor, 0, SEEK_END) == (off_t)-1)
+			return -1;
+		for (left = size - information.st_size; left > 0;)
+		{
+			ssize_t written = write(descriptor, zeros, left < (off_t)sizeof(zeros) ? (size_t)left : sizeof(zeros));
+
+			if (written <= 0)
+				return -1;
+			left -= written;
+		}
+		return lseek(descriptor, position, SEEK_SET) == (off_t)-1 ? -1 : 0;
+	}
+#endif
+	return ftruncate(descriptor, size);
 }
 
 int posix_disk_space(const char *path,

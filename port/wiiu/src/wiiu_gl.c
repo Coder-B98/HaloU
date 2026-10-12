@@ -1944,54 +1944,72 @@ static void GL_APIENTRY wiiu_glPixelStorei(GLenum name, GLint value)
 }
 
 /* The read framebuffer's pixels, as 32-bit RGBA (only what the renderer's
-screenshots ask for): the GPU copies its tiled colour buffer into a linear
-one, and the CPU reads that once the GPU is done. Rows come out as they are
+screenshots ask for): its colour texture drawn into a linear colour buffer,
+which the CPU reads once the GPU is done. (A drawn-into buffer, not a
+GX2CopySurface: Cemu writes a render target back to memory for the CPU,
+but left a copy's destination at zero, run r21.) Rows come out as they are
 in the buffer. */
 static void GL_APIENTRY wiiu_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format,
 	GLenum type, void *pixels)
 {
-	struct draw_targets targets;
-	GX2Surface *source;
-	GX2Surface staging;
-	GX2Rect rectangle;
-	GX2Point point = { 0, 0 };
+	static int said_target, said_memory;
+	struct draw_targets source, destination;
+	GX2ColorBuffer buffer;
+	float source_pixels[4], destination_pixels[4];
 	GLsizei row;
 
 	(void)format; (void)type;
 	memset(pixels, 0, (size_t)width * (size_t)height * 4);
-	if (!video_ready || width <= 0 || height <= 0 || !targets_get(gl.read_framebuffer, &targets) ||
-		!targets.color)
+	if (!video_ready || width <= 0 || height <= 0)
 		return;
-	source = &targets.color->surface;
-	if (x < 0 || y < 0 || (uint32_t)(x + width) > source->width || (uint32_t)(y + height) > source->height)
+	if (!targets_get(gl.read_framebuffer, &source) || !source.color_texture)
+	{
+		log_once(&said_target, "glReadPixels: the read framebuffer has no colour texture (screenshots read black)");
 		return;
-	memset(&staging, 0, sizeof(staging));
-	staging.dim = GX2_SURFACE_DIM_TEXTURE_2D;
-	staging.width = (uint32_t)width;
-	staging.height = (uint32_t)height;
-	staging.depth = 1;
-	staging.mipLevels = 1;
-	staging.format = source->format;
-	staging.aa = GX2_AA_MODE1X;
-	staging.use = GX2_SURFACE_USE_TEXTURE;
-	staging.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
-	GX2CalcSurfaceSizeAndAlignment(&staging);
-	staging.image = gpu_alloc(staging.alignment, staging.imageSize);
-	if (!staging.image)
+	}
+	memset(&buffer, 0, sizeof(buffer));
+	buffer.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
+	buffer.surface.width = (uint32_t)width;
+	buffer.surface.height = (uint32_t)height;
+	buffer.surface.depth = 1;
+	buffer.surface.mipLevels = 1;
+	buffer.surface.format = GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8;
+	buffer.surface.aa = GX2_AA_MODE1X;
+	buffer.surface.use = GX2_SURFACE_USE_COLOR_BUFFER | GX2_SURFACE_USE_TEXTURE;
+	buffer.surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
+	buffer.viewNumSlices = 1;
+	GX2CalcSurfaceSizeAndAlignment(&buffer.surface);
+	GX2InitColorBufferRegs(&buffer);
+	buffer.surface.image = gpu_alloc(buffer.surface.alignment, buffer.surface.imageSize);
+	if (!buffer.surface.image)
+	{
+		log_once(&said_memory, "glReadPixels: no memory for the copy (screenshots read black)");
 		return;
-	rectangle.left = x;
-	rectangle.top = y;
-	rectangle.right = x + width;
-	rectangle.bottom = y + height;
-	GX2CopySurfaceEx(source, targets.color->viewMip, targets.color->viewFirstSlice, &staging, 0, 0, 1,
-		&rectangle, &point);
+	}
+	/* (the CPU's cache emptied of it first, so its lines cannot be written
+	back over what the GPU puts there) */
+	DCFlushRange(buffer.surface.image, buffer.surface.imageSize);
+	memset(&destination, 0, sizeof(destination));
+	destination.color = &buffer;
+	destination.width = (unsigned int)width;
+	destination.height = (unsigned int)height;
+	source_pixels[0] = (float)x;
+	source_pixels[1] = (float)y;
+	source_pixels[2] = (float)(x + width);
+	source_pixels[3] = (float)(y + height);
+	destination_pixels[0] = 0.0f;
+	destination_pixels[1] = 0.0f;
+	destination_pixels[2] = (float)width;
+	destination_pixels[3] = (float)height;
+	blit_texture(source.color_texture, 0, source_pixels, &destination, destination_pixels, 0);
+	/* (the next draw binds its own colour buffer again) */
+	current_color = NULL;
 	GX2DrawDone();
-	DCInvalidateRange(staging.image, staging.imageSize);
+	DCInvalidateRange(buffer.surface.image, buffer.surface.imageSize);
 	for (row = 0; row < height; row++)
 		memcpy((unsigned char *)pixels + (size_t)row * (size_t)width * 4,
-			(const unsigned char *)staging.image + (size_t)row * staging.pitch * 4, (size_t)width * 4);
-	gpu_free(staging.image);
-	internal_done();
+			(const unsigned char *)buffer.surface.image + (size_t)row * buffer.surface.pitch * 4, (size_t)width * 4);
+	gpu_free(buffer.surface.image);
 }
 
 static void GL_APIENTRY wiiu_glFinish(void)

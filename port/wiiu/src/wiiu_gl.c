@@ -1515,6 +1515,16 @@ static void trace_state(const struct gl_program *program, const struct draw_targ
 			platform_log("GX2 draw:   %s at %u: buffer %u size %lu offset %lu stride %d, type %04x x%d, first %g %g %g %g",
 				variable->name, variable->location, attribute->buffer, buffer->size, attribute->offset,
 				attribute->stride, attribute->type, attribute->size, first[0], first[1], first[2], first[3]);
+			if (variable->location == 0 && attribute->offset + 32 <= buffer->size)
+			{
+				const unsigned char *bytes = buffer->data + attribute->offset;
+				char hex[3 * 32 + 1];
+				unsigned int byte;
+
+				for (byte = 0; byte < 32; byte++)
+					snprintf(hex + 3 * byte, 4, "%02x ", bytes[byte]);
+				platform_log("GX2 draw:     first vertex bytes: %s", hex);
+			}
 		}
 		else
 		{
@@ -1537,7 +1547,8 @@ static void trace_state(const struct gl_program *program, const struct draw_targ
 				uniform->count, value[0], value[1], value[2], value[3]);
 			if (!strcmp(uniform->name, "c"))
 			{
-				static const unsigned int shown[] = { 28, 29, 30, 31, 58, 59 };
+				static const unsigned int shown[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+					18, 19, 28, 29, 30, 31, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72 };
 				unsigned int element;
 
 				for (element = 0; element < sizeof(shown) / sizeof(shown[0]); element++)

@@ -32,6 +32,7 @@ builds' main thread has (a Wii U program's own is small).
 
 #define DATA_ROOT "fs:/vol/external01/halou"
 #define LOG_PATH DATA_ROOT "/halou.log"
+#define LOG_KEEP 5
 #define GAME_STACK_SIZE (8 * 1024 * 1024)
 
 int halo_xbox_main(void);
@@ -132,6 +133,23 @@ int main(int argc, char **argv)
 	WHBLogCafeInit();
 	WHBLogUdpInit();
 
+	/* the last runs' logs kept beside it, newest first (halou-1.log is the
+	run before this one), so a launch that goes wrong is still there to read
+	after the next */
+	{
+		char older[96], newer[96];
+		int index;
+
+		snprintf(older, sizeof(older), DATA_ROOT "/halou-%d.log", LOG_KEEP);
+		remove(older);
+		for (index = LOG_KEEP - 1; index >= 1; index--)
+		{
+			snprintf(newer, sizeof(newer), DATA_ROOT "/halou-%d.log", index);
+			snprintf(older, sizeof(older), DATA_ROOT "/halou-%d.log", index + 1);
+			rename(newer, older);
+		}
+		rename(LOG_PATH, DATA_ROOT "/halou-1.log");
+	}
 	/* the log on the SD card, each line written as it is said, so a crash
 	leaves it whole */
 	if (freopen(LOG_PATH, "w", stderr))

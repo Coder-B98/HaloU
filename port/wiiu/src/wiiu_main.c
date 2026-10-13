@@ -88,6 +88,8 @@ off the difference between "main at" and main's address there). */
 int main(int argc, char **argv);
 volatile unsigned int wiiu_swap_count;
 volatile unsigned long long wiiu_bytes_read;
+char wiiu_last_read[64];
+int config_boolean(const char *name);
 static OSThread *volatile game_os_thread;
 
 static void log_where_the_game_is(void)
@@ -96,7 +98,7 @@ static void log_where_the_game_is(void)
 	uint32_t pc = 0, lr = 0, callers[8] = { 0 };
 	int count = 0, waited;
 
-	if (thread)
+	if (thread && config_boolean("debug.wiiu_sample_game_thread"))
 	{
 		/* stopped only while its registers are copied: nothing is logged
 		while it is held, as it may hold the log's lock */
@@ -129,9 +131,9 @@ static void log_where_the_game_is(void)
 		}
 		OSResumeThread(thread);
 	}
-	log_line("Halo U: still running; %u frames shown, %llu MB read; game at %08x lr %08x;"
+	log_line("Halo U: still running; %u frames shown, %llu KB read, last from ...%.63s; game at %08x lr %08x;"
 		" callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
-		wiiu_swap_count, wiiu_bytes_read >> 20, (unsigned)pc, (unsigned)lr,
+		wiiu_swap_count, wiiu_bytes_read >> 10, wiiu_last_read, (unsigned)pc, (unsigned)lr,
 		(unsigned)callers[0], (unsigned)callers[1], (unsigned)callers[2], (unsigned)callers[3],
 		(unsigned)callers[4], (unsigned)callers[5], (unsigned)callers[6], (unsigned)callers[7]);
 }

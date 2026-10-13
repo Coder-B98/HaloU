@@ -507,8 +507,12 @@ BOOL WINAPI ReadFile(HANDLE handle, LPVOID buffer, DWORD count, LPDWORD bytes_re
 	/* port: counted for the log's "still running" lines (wiiu_main.c) */
 	{
 		extern volatile unsigned long long wiiu_bytes_read;
+		extern char wiiu_last_read[64];
+		size_t length = strlen(file->path);
+		const char *tail = length >= sizeof(wiiu_last_read) ? file->path + length - (sizeof(wiiu_last_read) - 1) : file->path;
 
 		wiiu_bytes_read += done;
+		memcpy(wiiu_last_read, tail, strlen(tail) + 1);
 	}
 #endif
 	if (bytes_read)

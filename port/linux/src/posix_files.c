@@ -110,12 +110,18 @@ int posix_truncate(int descriptor, posix_ulong size_low, posix_ulong size_high)
 #ifdef __WIIU__
 	/* the console's SD card can only shorten a file with ftruncate (Cemu
 	lengthens it too): a longer file is written out with zeros, keeping the
-	file position (the game's cache files are made at a map's size) */
+	file position (the game's cache files are made at a map's size).
+	The card also keeps a file's length only once the file is flushed, and
+	the cache files stay open until the console is switched off, so the
+	new length is flushed at once: otherwise every launch finds the cache
+	files the wrong length and writes them all out again (3.5 minutes,
+	console run 8). Zeros go a megabyte at a time, as the card is slow
+	with small writes. */
 	struct stat information;
 
 	if (fstat(descriptor, &information) == 0 && size > information.st_size)
 	{
-		static char zeros[0x10000];
+		static char zeros[0x100000];
 		off_t position = lseek(descriptor, 0, SEEK_CUR), left;
 
 		if (position == (off_t)-1 || lseek(descriptor, 0, SEEK_END) == (off_t)-1)
@@ -128,6 +134,7 @@ int posix_truncate(int descriptor, posix_ulong size_low, posix_ulong size_high)
 				return -1;
 			left -= written;
 		}
+		fsync(descriptor);
 		return lseek(descriptor, position, SEEK_SET) == (off_t)-1 ? -1 : 0;
 	}
 #endif

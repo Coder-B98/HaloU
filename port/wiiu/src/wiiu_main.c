@@ -80,8 +80,62 @@ static void log_line(const char *format, ...)
 /* the console's SD card only records how long a file is when the file is
 flushed or closed, so a console that hangs (and is switched off) leaves an
 empty halou.log however much was written. This thread flushes the log every
-two seconds, and says every fifteen that the program is still alive, so a
-hang shows when it started. */
+two seconds, and every sixteen says the program is still alive, with where
+the game's thread is: the frames shown, the bytes read from files, and the
+game thread's code address with the return addresses of its callers (look
+them up with powerpc-eabi-addr2line on this build's halou.elf, after taking
+off the difference between "main at" and main's address there). */
+int main(int argc, char **argv);
+volatile unsigned int wiiu_swap_count;
+volatile unsigned long long wiiu_bytes_read;
+static OSThread *volatile game_os_thread;
+
+static void log_where_the_game_is(void)
+{
+	OSThread *thread = game_os_thread;
+	uint32_t pc = 0, lr = 0, callers[8] = { 0 };
+	int count = 0, waited;
+
+	if (thread)
+	{
+		/* stopped only while its registers are copied: nothing is logged
+		while it is held, as it may hold the log's lock */
+		OSSuspendThread(thread);
+		for (waited = 0; waited < 50 && !OSIsThreadSuspended(thread); waited++)
+			OSSleepTicks(OSMicrosecondsToTicks(200));
+		if (OSIsThreadSuspended(thread))
+		{
+			uint32_t low = (uint32_t)thread->stackEnd, high = (uint32_t)thread->stackStart;
+			uint32_t frame = thread->context.gpr[1];
+
+			pc = thread->context.srr0;
+			lr = thread->context.lr;
+			if (low > high)
+			{
+				uint32_t swap = low;
+
+				low = high;
+				high = swap;
+			}
+			while (count < 8 && frame >= low && frame + 8 <= high && !(frame & 3))
+			{
+				uint32_t next = *(uint32_t *)frame;
+
+				if (next <= frame || next + 8 > high)
+					break;
+				callers[count++] = *(uint32_t *)(next + 4);
+				frame = next;
+			}
+		}
+		OSResumeThread(thread);
+	}
+	log_line("Halo U: still running; %u frames shown, %llu MB read; game at %08x lr %08x;"
+		" callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		wiiu_swap_count, wiiu_bytes_read >> 20, (unsigned)pc, (unsigned)lr,
+		(unsigned)callers[0], (unsigned)callers[1], (unsigned)callers[2], (unsigned)callers[3],
+		(unsigned)callers[4], (unsigned)callers[5], (unsigned)callers[6], (unsigned)callers[7]);
+}
+
 static void *log_sync_thread(void *unused)
 {
 	unsigned int ticks = 0;
@@ -91,7 +145,7 @@ static void *log_sync_thread(void *unused)
 	{
 		OSSleepTicks(OSMillisecondsToTicks(2000));
 		if (++ticks % 8 == 0)
-			log_line("Halo U: still running\n");
+			log_where_the_game_is();
 		fsync(fileno(stderr));
 	}
 	return NULL;
@@ -135,6 +189,7 @@ static void *game_thread(void *result)
 	thread stays on the main core (CPU 1), where the system expects it */
 	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
 	OSYieldThread();
+	game_os_thread = OSGetCurrentThread();
 	*(int *)result = halo_xbox_main();
 	return NULL;
 }
@@ -180,6 +235,7 @@ int main(int argc, char **argv)
 	always says what made it */
 	log_line("Halo U: build " HALOU_BUILD_ID "\n");
 	log_line("Halo U: starting, data in " DATA_ROOT "\n");
+	log_line("Halo U: main at %p\n", (void *)main);
 	WHBLogPrint("Halo U: build " HALOU_BUILD_ID ", data in " DATA_ROOT);
 
 	atexit(exit_said);

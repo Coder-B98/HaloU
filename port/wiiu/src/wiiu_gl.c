@@ -3602,6 +3602,11 @@ void platform_video_swap(void)
 	GX2CopyColorBufferToScanBuffer(&screen, GX2_SCAN_TARGET_DRC);
 	GX2SwapScanBuffers();
 	GX2Flush();
+	{
+		extern volatile unsigned int wiiu_swap_count;
+
+		wiiu_swap_count++;
+	}
 	if (!screen_shown)
 	{
 		screen_shown = 1;

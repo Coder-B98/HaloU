@@ -503,6 +503,14 @@ BOOL WINAPI ReadFile(HANDLE handle, LPVOID buffer, DWORD count, LPDWORD bytes_re
 	if (!file)
 		return FALSE;
 	result = read_at(file, buffer, count, &done, overlapped != NULL, overlapped ? overlapped_offset(overlapped) : 0);
+#ifdef __WIIU__
+	/* port: counted for the log's "still running" lines (wiiu_main.c) */
+	{
+		extern volatile unsigned long long wiiu_bytes_read;
+
+		wiiu_bytes_read += done;
+	}
+#endif
 	if (bytes_read)
 		*bytes_read = done;
 	if (overlapped)

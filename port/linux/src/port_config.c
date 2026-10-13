@@ -440,8 +440,6 @@ static const struct config_setting config_settings[] =
 		"Skinned vertex shaders colour their vertices by their second node's constant read." },
 	{ "debug.gpu_relative_guard", _config_boolean, "false", "HALO_GPU_RELATIVE_GUARD", _environment_set_is_true, _platform_all,
 		"Vertex shaders read zero for a constant index out of range, instead of the nearest constant." },
-	{ "debug.wiiu_sample_game_thread", _config_boolean, "false", "HALO_WIIU_SAMPLE_GAME_THREAD", _environment_set_is_true, _platform_all,
-		"Wii U: the log's \"still running\" lines say where the game's thread is, by stopping it for a moment." },
 	{ "debug.gpu_uniform_blocks", _config_boolean, "false", "HALO_GPU_UNIFORM_BLOCKS", _environment_set_is_true, _platform_all,
 		"Wii U: the game's shaders read their uniforms from uniform blocks instead of registers." },
 	{ "debug.gpu_uniform_blocks_unswapped", _config_boolean, "false", "HALO_GPU_UNIFORM_BLOCKS_UNSWAPPED", _environment_set_is_true, _platform_all,

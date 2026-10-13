@@ -31,6 +31,9 @@ Conventions carried over from the Xbox:
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef __WIIU__
+#include <coreinit/thread.h>
+#endif
 
 void d3d8_surface_initialize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
@@ -973,11 +976,31 @@ static volatile unsigned int flip_count;
 static unsigned long pending_flips;
 static BOOL vertical_blank_thread_started = FALSE;
 
+#ifdef __WIIU__
+/* read by the Wii U log's "still running" line (wiiu_main.c) */
+OSThread *volatile wiiu_vertical_blank_os_thread;
+unsigned long wiiu_vertical_blank_count(void) { return vertical_blank_count; }
+unsigned long wiiu_pending_flips(void) { return pending_flips; }
+#endif
+
 static void *vertical_blank_thread(void *unused)
 {
 	struct timespec next;
 
 	(void)unused;
+#ifdef __WIIU__
+	/* The Wii U never shares a core between threads by turns: the highest
+	priority thread that is ready runs until it waits. On the console (not
+	in Cemu) this thread never ran, so the game waited for it forever with
+	3 frames shown (run r38). It gets a core of its own (CPU 0; the game is
+	on CPU 1) and a priority above the game's threads (lower is higher). */
+	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU0);
+	OSSetThreadPriority(OSGetCurrentThread(), 8);
+	OSYieldThread();
+	wiiu_vertical_blank_os_thread = OSGetCurrentThread();
+	platform_log("vertical blank thread running at priority %d",
+		(int)OSGetThreadPriority(OSGetCurrentThread()));
+#endif
 	clock_gettime(CLOCK_MONOTONIC, &next);
 	for (;;)
 	{

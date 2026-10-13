@@ -95,27 +95,28 @@ extern volatile int wiiu_io_writing;
 int config_boolean(const char *name);
 static OSThread *volatile game_os_thread;
 
-static void log_where_the_game_is(void)
-{
-	OSThread *thread = game_os_thread;
-	uint32_t pc = 0, lr = 0, callers[8] = { 0 };
-	int count = 0, state = thread ? thread->state : 0, state_after;
-	unsigned long io_started = wiiu_io_started;
+extern OSThread *volatile wiiu_vertical_blank_os_thread;
+unsigned long wiiu_vertical_blank_count(void);
+unsigned long wiiu_pending_flips(void);
 
-	/* what the files are doing first: if anything below goes wrong, this
-	much is in the log already */
-	log_line("Halo U: still running; %u frames, read %llu KB (last ...%.40s), wrote %llu KB (last ...%.40s)\n",
-		wiiu_swap_count, wiiu_bytes_read >> 10, wiiu_last_read, wiiu_bytes_written >> 10, wiiu_last_written);
-	if (io_started)
-		log_line("Halo U:   a %s of ...%.50s has waited %lu ms\n", wiiu_io_writing ? "write" : "read",
-			wiiu_io_path, wiiu_log_milliseconds() + 1 - io_started);
-	/* a thread that is waiting (state 4) has its registers saved; they are
-	read without stopping it (stopping it froze the console: run 34), and
-	every word of its stack is checked as readable first. If it started
-	running again meanwhile the result is thrown away. */
-	if (!thread || state != OS_THREAD_STATE_WAITING)
+/* a thread that is waiting (state 4) has its registers saved; they are read
+without stopping it (stopping it froze the console: run 34), and every word
+of its stack is checked as readable first. If it started running again
+meanwhile, the line says so. */
+static void log_where_a_thread_is(const char *name, OSThread *thread)
+{
+	uint32_t pc, lr, callers[8] = { 0 };
+	int count = 0, state = thread ? thread->state : 0, state_after;
+
+	if (!thread)
 	{
-		log_line("Halo U:   game thread state %d (not waiting)\n", state);
+		log_line("Halo U:   %s thread not started\n", name);
+		return;
+	}
+	if (state != OS_THREAD_STATE_WAITING)
+	{
+		log_line("Halo U:   %s thread state %d (not waiting), priority %d\n", name, state,
+			(int)OSGetThreadPriority(thread));
 		return;
 	}
 	pc = thread->context.srr0;
@@ -142,10 +143,29 @@ static void log_where_the_game_is(void)
 		}
 	}
 	state_after = thread->state;
-	log_line("Halo U:   game thread state %d%s at %08x lr %08x; callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
-		state, state_after == state ? "" : " (moved on while read)", (unsigned)pc, (unsigned)lr,
+	log_line("Halo U:   %s thread state %d%s, priority %d, at %08x lr %08x; callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		name, state, state_after == state ? "" : " (moved on while read)", (int)OSGetThreadPriority(thread),
+		(unsigned)pc, (unsigned)lr,
 		(unsigned)callers[0], (unsigned)callers[1], (unsigned)callers[2], (unsigned)callers[3],
 		(unsigned)callers[4], (unsigned)callers[5], (unsigned)callers[6], (unsigned)callers[7]);
+}
+
+static void log_where_the_game_is(void)
+{
+	unsigned long io_started = wiiu_io_started;
+
+	/* what the files are doing first: if anything below goes wrong, this
+	much is in the log already */
+	log_line("Halo U: still running; %u frames, read %llu KB (last ...%.40s), wrote %llu KB (last ...%.40s)\n",
+		wiiu_swap_count, wiiu_bytes_read >> 10, wiiu_last_read, wiiu_bytes_written >> 10, wiiu_last_written);
+	if (io_started)
+		log_line("Halo U:   a %s of ...%.50s has waited %lu ms\n", wiiu_io_writing ? "write" : "read",
+			wiiu_io_path, wiiu_log_milliseconds() + 1 - io_started);
+	/* the screen's refresh timer: the game waits on it after every frame */
+	log_line("Halo U:   %lu vertical blanks, %lu frames waiting for one\n",
+		wiiu_vertical_blank_count(), wiiu_pending_flips());
+	log_where_a_thread_is("game", game_os_thread);
+	log_where_a_thread_is("vertical blank", wiiu_vertical_blank_os_thread);
 }
 
 static void *log_sync_thread(void *unused)

@@ -19,6 +19,10 @@ threads, asynchronous procedure calls, time, memory and debug output.
 #endif
 #include <time.h>
 #include <unistd.h>
+#ifdef __WIIU__
+#include <coreinit/thread.h>
+#include <coreinit/time.h>
+#endif
 
 #define PLATFORM_HANDLE_SIGNATURE 0x686e646cUL /* 'hndl' */
 
@@ -626,9 +630,21 @@ BOOL WINAPI GetExitCodeThread(HANDLE object, LPDWORD exit_code)
 	return TRUE;
 }
 
+#ifdef __WIIU__
+/* On the Wii U, giving way (OSYieldThread) only lets a thread of the same
+priority run; one below it would starve while a loop keeps "yielding". A
+short real sleep lets every thread on the core have a turn. */
+static void give_way(void)
+{
+	OSSleepTicks(OSMicrosecondsToTicks(500));
+}
+#else
+#define give_way() sched_yield()
+#endif
+
 BOOL WINAPI SwitchToThread(void)
 {
-	sched_yield();
+	give_way();
 	return TRUE;
 }
 
@@ -640,7 +656,7 @@ DWORD WINAPI SleepEx(DWORD milliseconds, BOOL alertable)
 		return WAIT_IO_COMPLETION;
 	if (milliseconds == 0)
 	{
-		sched_yield();
+		give_way();
 		return 0;
 	}
 	if (milliseconds == INFINITE)

@@ -15,6 +15,7 @@ builds' main thread has (a Wii U program's own is small).
 
 #include <coreinit/debug.h>
 #include <coreinit/exception.h>
+#include <coreinit/memorymap.h>
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <whb/log.h>
@@ -98,55 +99,51 @@ static void log_where_the_game_is(void)
 {
 	OSThread *thread = game_os_thread;
 	uint32_t pc = 0, lr = 0, callers[8] = { 0 };
-	int count = 0, waited, state = thread ? thread->state : 0;
+	int count = 0, state = thread ? thread->state : 0, state_after;
 	unsigned long io_started = wiiu_io_started;
-	BOOL sample = thread && config_boolean("debug.wiiu_sample_game_thread");
 
-	/* a thread that is waiting (state 4) has its registers saved and stays
-	put while they are read; one that is running is only read if asked, by
-	stopping it for a moment (which may freeze the console: run 34) */
-	if (thread && (state == OS_THREAD_STATE_WAITING || sample))
-	{
-		if (state != OS_THREAD_STATE_WAITING)
-		{
-			OSSuspendThread(thread);
-			for (waited = 0; waited < 50 && !OSIsThreadSuspended(thread); waited++)
-				OSSleepTicks(OSMicrosecondsToTicks(200));
-		}
-		if (state == OS_THREAD_STATE_WAITING || OSIsThreadSuspended(thread))
-		{
-			uint32_t low = (uint32_t)thread->stackEnd, high = (uint32_t)thread->stackStart;
-			uint32_t frame = thread->context.gpr[1];
-
-			pc = thread->context.srr0;
-			lr = thread->context.lr;
-			if (low > high)
-			{
-				uint32_t swap = low;
-
-				low = high;
-				high = swap;
-			}
-			while (count < 8 && frame >= low && frame + 8 <= high && !(frame & 3))
-			{
-				uint32_t next = *(uint32_t *)frame;
-
-				if (next <= frame || next + 8 > high)
-					break;
-				callers[count++] = *(uint32_t *)(next + 4);
-				frame = next;
-			}
-		}
-		if (state != OS_THREAD_STATE_WAITING)
-			OSResumeThread(thread);
-	}
+	/* what the files are doing first: if anything below goes wrong, this
+	much is in the log already */
 	log_line("Halo U: still running; %u frames, read %llu KB (last ...%.40s), wrote %llu KB (last ...%.40s)\n",
 		wiiu_swap_count, wiiu_bytes_read >> 10, wiiu_last_read, wiiu_bytes_written >> 10, wiiu_last_written);
 	if (io_started)
 		log_line("Halo U:   a %s of ...%.50s has waited %lu ms\n", wiiu_io_writing ? "write" : "read",
 			wiiu_io_path, wiiu_log_milliseconds() + 1 - io_started);
-	log_line("Halo U:   game thread state %d at %08x lr %08x; callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
-		state, (unsigned)pc, (unsigned)lr,
+	/* a thread that is waiting (state 4) has its registers saved; they are
+	read without stopping it (stopping it froze the console: run 34), and
+	every word of its stack is checked as readable first. If it started
+	running again meanwhile the result is thrown away. */
+	if (!thread || state != OS_THREAD_STATE_WAITING)
+	{
+		log_line("Halo U:   game thread state %d (not waiting)\n", state);
+		return;
+	}
+	pc = thread->context.srr0;
+	lr = thread->context.lr;
+	{
+		uint32_t low = (uint32_t)thread->stackEnd, high = (uint32_t)thread->stackStart;
+		uint32_t frame = thread->context.gpr[1];
+
+		if (low > high)
+		{
+			uint32_t swap = low;
+
+			low = high;
+			high = swap;
+		}
+		while (count < 8 && frame >= low && frame + 8 <= high && !(frame & 3) && OSIsAddressValid(frame))
+		{
+			uint32_t next = *(volatile uint32_t *)frame;
+
+			if (next <= frame || next + 8 > high || (next & 3) || !OSIsAddressValid(next + 4))
+				break;
+			callers[count++] = *(volatile uint32_t *)(next + 4);
+			frame = next;
+		}
+	}
+	state_after = thread->state;
+	log_line("Halo U:   game thread state %d%s at %08x lr %08x; callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		state, state_after == state ? "" : " (moved on while read)", (unsigned)pc, (unsigned)lr,
 		(unsigned)callers[0], (unsigned)callers[1], (unsigned)callers[2], (unsigned)callers[3],
 		(unsigned)callers[4], (unsigned)callers[5], (unsigned)callers[6], (unsigned)callers[7]);
 }

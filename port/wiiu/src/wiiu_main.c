@@ -76,6 +76,12 @@ static void log_line(const char *format, ...)
 	va_start(arguments, format);
 	vfprintf(stderr, format, arguments);
 	va_end(arguments);
+	/* the first minute line by line: see platform_log (xbox_kernel.c) */
+	if (wiiu_log_milliseconds() < 60000)
+	{
+		fflush(stderr);
+		fsync(fileno(stderr));
+	}
 }
 
 /* the console's SD card only records how long a file is when the file is

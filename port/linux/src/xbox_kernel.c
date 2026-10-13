@@ -6,6 +6,7 @@ threads, asynchronous procedure calls, time, memory and debug output.
 */
 
 #include "platform.h"
+#include "port_config.h"
 
 #include <errno.h>
 #include <sched.h>
@@ -48,6 +49,15 @@ void platform_log(const char *format, ...)
 	vfprintf(stderr, format, arguments);
 	va_end(arguments);
 	fputc('\n', stderr);
+#ifdef __WIIU__
+	/* a console that freezes keeps none of a log it never flushed (run
+	r39), so the first minute is flushed line by line */
+	if (milliseconds < 60000)
+	{
+		fflush(stderr);
+		fsync(fileno(stderr));
+	}
+#endif
 }
 
 void platform_unimplemented(const char *name)
@@ -636,7 +646,14 @@ priority run; one below it would starve while a loop keeps "yielding". A
 short real sleep lets every thread on the core have a turn. */
 static void give_way(void)
 {
-	OSSleepTicks(OSMicrosecondsToTicks(500));
+	static int sleep = -1;
+
+	if (sleep < 0)
+		sleep = config_boolean("debug.wiiu_give_way_sleep") ? 1 : 0;
+	if (sleep)
+		OSSleepTicks(OSMicrosecondsToTicks(500));
+	else
+		OSYieldThread();
 }
 #else
 #define give_way() sched_yield()

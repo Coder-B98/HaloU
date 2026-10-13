@@ -32,6 +32,7 @@ Conventions carried over from the Xbox:
 #include <string.h>
 #include <time.h>
 #ifdef __WIIU__
+#include <coreinit/core.h>
 #include <coreinit/thread.h>
 #endif
 
@@ -992,14 +993,23 @@ static void *vertical_blank_thread(void *unused)
 	/* The Wii U never shares a core between threads by turns: the highest
 	priority thread that is ready runs until it waits. On the console (not
 	in Cemu) this thread never ran, so the game waited for it forever with
-	3 frames shown (run r38). It gets a core of its own (CPU 0; the game is
-	on CPU 1) and a priority above the game's threads (lower is higher). */
-	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU0);
-	OSSetThreadPriority(OSGetCurrentThread(), 8);
-	OSYieldThread();
-	wiiu_vertical_blank_os_thread = OSGetCurrentThread();
-	platform_log("vertical blank thread running at priority %d",
-		(int)OSGetThreadPriority(OSGetCurrentThread()));
+	3 frames shown (run r38). Giving it core 0 and priority 8 at once froze
+	the whole console (r39), so each is a setting of its own to try. */
+	{
+		long priority = config_integer("debug.wiiu_vblank_priority");
+		long core = config_integer("debug.wiiu_vblank_core");
+		static const uint32_t affinity[3] = { OS_THREAD_ATTRIB_AFFINITY_CPU0,
+			OS_THREAD_ATTRIB_AFFINITY_CPU1, OS_THREAD_ATTRIB_AFFINITY_CPU2 };
+
+		if (core >= 0 && core <= 2)
+			OSSetThreadAffinity(OSGetCurrentThread(), affinity[core]);
+		if (priority > 0 && priority <= 31)
+			OSSetThreadPriority(OSGetCurrentThread(), (int32_t)priority);
+		OSYieldThread();
+		wiiu_vertical_blank_os_thread = OSGetCurrentThread();
+		platform_log("vertical blank thread running on core %d at priority %d (asked core %ld, priority %ld)",
+			(int)OSGetCoreId(), (int)OSGetThreadPriority(OSGetCurrentThread()), core, priority);
+	}
 #endif
 	clock_gettime(CLOCK_MONOTONIC, &next);
 	for (;;)

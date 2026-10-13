@@ -408,6 +408,56 @@ static ssize_t read_some(struct platform_file *file, void *buffer, size_t count,
 		read(file->descriptor, buffer, count);
 }
 
+#ifdef __WIIU__
+/* port: what the files are doing, for the log's "still running" lines
+(wiiu_main.c): bytes read and written, the last file of each, and a read
+or write still waiting for the card (when it started, and on which file) */
+volatile unsigned long long wiiu_bytes_read, wiiu_bytes_written;
+char wiiu_last_read[64], wiiu_last_written[64];
+volatile unsigned long wiiu_io_started;
+volatile int wiiu_io_writing;
+char wiiu_io_path[64];
+unsigned long wiiu_log_milliseconds(void);
+
+static void wiiu_copy_tail(char *into, const char *path)
+{
+	size_t length = strlen(path);
+	const char *tail = length >= 64 ? path + length - 63 : path;
+
+	memcpy(into, tail, strlen(tail) + 1);
+}
+
+static void wiiu_io_begin(const struct platform_file *file, int writing)
+{
+	wiiu_copy_tail(wiiu_io_path, file->path);
+	wiiu_io_writing = writing;
+	wiiu_io_started = wiiu_log_milliseconds() + 1;
+}
+
+static void wiiu_io_end(const struct platform_file *file, int writing, long done)
+{
+	wiiu_io_started = 0;
+	if (done > 0)
+	{
+		if (writing)
+		{
+			wiiu_bytes_written += (unsigned long)done;
+			wiiu_copy_tail(wiiu_last_written, file->path);
+		}
+		else
+		{
+			wiiu_bytes_read += (unsigned long)done;
+			wiiu_copy_tail(wiiu_last_read, file->path);
+		}
+	}
+}
+#define IO_BEGIN(file, writing) wiiu_io_begin(file, writing)
+#define IO_END(file, writing, done) wiiu_io_end(file, writing, (long)(done))
+#else
+#define IO_BEGIN(file, writing) ((void)0)
+#define IO_END(file, writing, done) ((void)0)
+#endif
+
 static BOOL read_at(struct platform_file *file, LPVOID buffer, DWORD count, LPDWORD bytes_read,
 	BOOL positioned, unsigned long long offset)
 {
@@ -433,7 +483,9 @@ static BOOL read_at(struct platform_file *file, LPVOID buffer, DWORD count, LPDW
 
 		if (bounce && wanted > READ_BOUNCE_SIZE)
 			wanted = READ_BOUNCE_SIZE;
+		IO_BEGIN(file, 0);
 		result = read_some(file, bounce ? staging : (char *)buffer + total, wanted, positioned, offset + total);
+		IO_END(file, 0, result);
 		if (result < 0)
 		{
 			if (errno == EINTR)
@@ -469,9 +521,13 @@ static BOOL write_at(struct platform_file *file, LPCVOID buffer, DWORD count, LP
 
 	while (total < count)
 	{
-		ssize_t result = positioned ?
+		ssize_t result;
+
+		IO_BEGIN(file, 1);
+		result = positioned ?
 			pwrite(file->descriptor, (const char *)buffer + total, count - total, (off_t)(offset + total)) :
 			write(file->descriptor, (const char *)buffer + total, count - total);
+		IO_END(file, 1, result);
 
 		if (result < 0)
 		{
@@ -503,18 +559,6 @@ BOOL WINAPI ReadFile(HANDLE handle, LPVOID buffer, DWORD count, LPDWORD bytes_re
 	if (!file)
 		return FALSE;
 	result = read_at(file, buffer, count, &done, overlapped != NULL, overlapped ? overlapped_offset(overlapped) : 0);
-#ifdef __WIIU__
-	/* port: counted for the log's "still running" lines (wiiu_main.c) */
-	{
-		extern volatile unsigned long long wiiu_bytes_read;
-		extern char wiiu_last_read[64];
-		size_t length = strlen(file->path);
-		const char *tail = length >= sizeof(wiiu_last_read) ? file->path + length - (sizeof(wiiu_last_read) - 1) : file->path;
-
-		wiiu_bytes_read += done;
-		memcpy(wiiu_last_read, tail, strlen(tail) + 1);
-	}
-#endif
 	if (bytes_read)
 		*bytes_read = done;
 	if (overlapped)

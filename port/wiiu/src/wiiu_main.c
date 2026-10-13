@@ -87,8 +87,10 @@ them up with powerpc-eabi-addr2line on this build's halou.elf, after taking
 off the difference between "main at" and main's address there). */
 int main(int argc, char **argv);
 volatile unsigned int wiiu_swap_count;
-volatile unsigned long long wiiu_bytes_read;
-char wiiu_last_read[64];
+extern volatile unsigned long long wiiu_bytes_read, wiiu_bytes_written;
+extern char wiiu_last_read[64], wiiu_last_written[64], wiiu_io_path[64];
+extern volatile unsigned long wiiu_io_started;
+extern volatile int wiiu_io_writing;
 int config_boolean(const char *name);
 static OSThread *volatile game_os_thread;
 
@@ -96,16 +98,22 @@ static void log_where_the_game_is(void)
 {
 	OSThread *thread = game_os_thread;
 	uint32_t pc = 0, lr = 0, callers[8] = { 0 };
-	int count = 0, waited;
+	int count = 0, waited, state = thread ? thread->state : 0;
+	unsigned long io_started = wiiu_io_started;
+	BOOL sample = thread && config_boolean("debug.wiiu_sample_game_thread");
 
-	if (thread && config_boolean("debug.wiiu_sample_game_thread"))
+	/* a thread that is waiting (state 4) has its registers saved and stays
+	put while they are read; one that is running is only read if asked, by
+	stopping it for a moment (which may freeze the console: run 34) */
+	if (thread && (state == OS_THREAD_STATE_WAITING || sample))
 	{
-		/* stopped only while its registers are copied: nothing is logged
-		while it is held, as it may hold the log's lock */
-		OSSuspendThread(thread);
-		for (waited = 0; waited < 50 && !OSIsThreadSuspended(thread); waited++)
-			OSSleepTicks(OSMicrosecondsToTicks(200));
-		if (OSIsThreadSuspended(thread))
+		if (state != OS_THREAD_STATE_WAITING)
+		{
+			OSSuspendThread(thread);
+			for (waited = 0; waited < 50 && !OSIsThreadSuspended(thread); waited++)
+				OSSleepTicks(OSMicrosecondsToTicks(200));
+		}
+		if (state == OS_THREAD_STATE_WAITING || OSIsThreadSuspended(thread))
 		{
 			uint32_t low = (uint32_t)thread->stackEnd, high = (uint32_t)thread->stackStart;
 			uint32_t frame = thread->context.gpr[1];
@@ -129,11 +137,16 @@ static void log_where_the_game_is(void)
 				frame = next;
 			}
 		}
-		OSResumeThread(thread);
+		if (state != OS_THREAD_STATE_WAITING)
+			OSResumeThread(thread);
 	}
-	log_line("Halo U: still running; %u frames shown, %llu KB read, last from ...%.63s; game at %08x lr %08x;"
-		" callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
-		wiiu_swap_count, wiiu_bytes_read >> 10, wiiu_last_read, (unsigned)pc, (unsigned)lr,
+	log_line("Halo U: still running; %u frames, read %llu KB (last ...%.40s), wrote %llu KB (last ...%.40s)\n",
+		wiiu_swap_count, wiiu_bytes_read >> 10, wiiu_last_read, wiiu_bytes_written >> 10, wiiu_last_written);
+	if (io_started)
+		log_line("Halo U:   a %s of ...%.50s has waited %lu ms\n", wiiu_io_writing ? "write" : "read",
+			wiiu_io_path, wiiu_log_milliseconds() + 1 - io_started);
+	log_line("Halo U:   game thread state %d at %08x lr %08x; callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		state, (unsigned)pc, (unsigned)lr,
 		(unsigned)callers[0], (unsigned)callers[1], (unsigned)callers[2], (unsigned)callers[3],
 		(unsigned)callers[4], (unsigned)callers[5], (unsigned)callers[6], (unsigned)callers[7]);
 }

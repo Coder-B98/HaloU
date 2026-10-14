@@ -478,6 +478,8 @@ static long hs_real_to_long(
 	long r);
 static long hs_long_to_short(
 	long l);
+static long hs_short_to_long(
+	long s);
 static long hs_object_name_to_object_list(
 	long object_name_index);
 static long hs_object_to_object_list(
@@ -658,7 +660,7 @@ hs_typecasting_procedure typecasting_procedures[NUMBER_OF_HS_TYPES][NUMBER_OF_HS
 		NULL, NULL,
 		hs_real_to_long,
 		NULL,
-		hs_long_to_short,
+		hs_short_to_long,
 	},
 	{ NULL }, /* string */
 	{ NULL }, /* script */
@@ -1567,7 +1569,7 @@ static void hs_inspect_boolean(
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x241,
 		type==_hs_type_boolean);
 
-	sprintf(buffer, "%s", (boolean)value ? "true" : "false");
+	sprintf(buffer, "%s", hs_value_boolean(value) ? "true" : "false");
 
 	return;
 }
@@ -1593,7 +1595,7 @@ static void hs_inspect_short_integer(
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x257,
 		type==_hs_type_short_integer);
 
-	sprintf(buffer, "%d", (short)value);
+	sprintf(buffer, "%d", hs_value_short(value));
 
 	return;
 }
@@ -1637,18 +1639,18 @@ static void hs_inspect_enum(
 	match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x27b,
 		HS_TYPE_IS_ENUM(type));
 	match_vassert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x27c,
-		(short)value>=0 && (short)value<enum_definition->count,
+		hs_value_short(value)>=0 && hs_value_short(value)<enum_definition->count,
 		"enum_value>=0 && enum_value<enum_definition->count");
 
 	/* port: a value that isn't one of the enum's isn't looked up */
-	if ((short)value<0 || (short)value>=enum_definition->count)
+	if (hs_value_short(value)<0 || hs_value_short(value)>=enum_definition->count)
 	{
-		sprintf(buffer, "<invalid %s %d>", hs_type_names[type], (short)value);
+		sprintf(buffer, "<invalid %s %d>", hs_type_names[type], hs_value_short(value));
 
 		return;
 	}
 
-	sprintf(buffer, "%s", enum_definition->values[(short)value]);
+	sprintf(buffer, "%s", enum_definition->values[hs_value_short(value)]);
 
 	return;
 }
@@ -1681,7 +1683,7 @@ static long hs_short_to_boolean(
 	   forms copy the whole long into hs thread stacks and hs globals, so these bytes reach the saved-game CRC
 	   and the save files (game_state_write_to_persistent_storage, game_state_write_to_file,
 	   game_state_write_core). */
-	*(boolean *)&result = (short)s==0;
+	*(boolean *)&result = hs_value_short(s)==0;
 
 	return result;
 }
@@ -1703,7 +1705,7 @@ static long hs_short_to_real(
 {
 	long result;
 
-	*(real *)&result = (real)(short)s;
+	*(real *)&result = (real)hs_value_short(s);
 
 	return result;
 }
@@ -1723,7 +1725,7 @@ static long hs_enum_to_real(
 {
 	long result;
 
-	*(real *)&result = (real)((short)e+1);
+	*(real *)&result = (real)(hs_value_short(e)+1);
 
 	return result;
 }
@@ -1766,13 +1768,27 @@ static long hs_long_to_short(
 	return result;
 }
 
+/* port: January casts a short to a long with hs_long_to_short, which on a
+little-endian machine leaves the short's slot as it is (its low word the
+short); on a big-endian one the short is at the slot's start and is read
+from there */
+static long hs_short_to_long(
+	long s)
+{
+#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	return hs_value_short(s);
+#else
+	return hs_long_to_short(s);
+#endif
+}
+
 static long hs_object_name_to_object_list(
 	long object_name_index)
 {
 	long object_index;
 	long object_list_index = NONE;
 
-	object_index = object_index_from_name_index((short)object_name_index);
+	object_index = object_index_from_name_index(hs_value_short(object_name_index));
 	if (object_index != NONE)
 	{
 		object_list_index = object_list_new();
@@ -1882,7 +1898,7 @@ long hs_cast(
 		if (!HS_TYPE_IS_OBJECT(desired_type))
 			return typecasting_procedures[desired_type][actual_type](value);
 		else if (HS_TYPE_IS_OBJECT_NAME(actual_type))
-			return object_index_from_name_index((short)value);
+			return object_index_from_name_index(hs_value_short(value));
 	}
 
 	return value;
@@ -2047,7 +2063,7 @@ void hs_evaluate_inequality(
 			match_assert("c:\\halo\\source\\hs\\hs_library_internal_runtime.h", 0x171,
 				parameter_types[0]==_hs_type_short_integer || HS_TYPE_IS_ENUM(parameter_types[0]));
 
-			HS_EVALUATE_INEQUALITY((real)(short)arguments[0], (real)(short)arguments[1], 0x172);
+			HS_EVALUATE_INEQUALITY((real)hs_value_short(arguments[0]), (real)hs_value_short(arguments[1]), 0x172);
 			break;
 		}
 
@@ -2149,7 +2165,7 @@ void hs_evaluate_if(
 	}
 	else if (*expression_index==NONE)
 	{
-		if ((boolean)*condition)
+		if (hs_value_boolean(*condition))
 		{
 			*expression_index = hs_syntax_get(hs_syntax_get(hs_syntax_get(
 				thread->stack->expression_index)->data)->next_node_index)->next_node_index;
@@ -2588,7 +2604,7 @@ void hs_evaluate_sleep_until(
 
 	if (*argument_index==1)
 	{
-		if ((boolean)*condition ||
+		if (hs_value_boolean(*condition) ||
 			(*timeout!=NONE && game_time_get()>=*timeout+*start_time))
 		{
 			hs_return(thread_index, 0);
@@ -2599,7 +2615,7 @@ void hs_evaluate_sleep_until(
 				thread->stack->expression_index)->data)->next_node_index,
 				condition);
 
-			thread->sleep_until = game_time_get()+MAX(1, (short)*ticks);
+			thread->sleep_until = game_time_get()+MAX(1, hs_value_short(*ticks));
 			if (*timeout!=NONE)
 			{
 				thread->sleep_until = MIN(*timeout+*start_time, thread->sleep_until);
@@ -2654,7 +2670,7 @@ void hs_evaluate_sleep(
 
 		if (*argument_index!=0)
 		{
-			short sleep_ticks = (short)*ticks;
+			short sleep_ticks = hs_value_short(*ticks);
 
 			if (sleep_ticks!=0)
 			{
@@ -2848,12 +2864,12 @@ static long hs_type_default_value(
 	case _hs_type_void:
 		return 0;
 	case _hs_type_boolean:
-		return _hs_type_boolean_default;
+		return hs_value_from_boolean(_hs_type_boolean_default);
 	case _hs_type_real:
 		real_default.real_value = _hs_type_real_default;
 		return real_default.long_value;
 	case _hs_type_short_integer:
-		return _hs_type_short_integer_default;
+		return hs_value_from_short(_hs_type_short_integer_default);
 	case _hs_type_long_integer:
 		return _hs_type_long_integer_default;
 	case _hs_type_string:
@@ -3206,7 +3222,7 @@ static void hs_global_reconcile_write(
 		{
 		case _hs_type_boolean:
 			if (external->address)
-				*(boolean *)external->address = (boolean)global->value;
+				*(boolean *)external->address = hs_value_boolean(global->value);
 			break;
 		case _hs_type_real:
 			value = *(real *)&global->value;
@@ -3215,7 +3231,7 @@ static void hs_global_reconcile_write(
 			break;
 		case _hs_type_short_integer:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_long_integer:
 			if (external->address)
@@ -3227,31 +3243,31 @@ static void hs_global_reconcile_write(
 			break;
 		case _hs_type_script:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_trigger_volume:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_cutscene_flag:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_cutscene_camera_point:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_cutscene_title:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_cutscene_recording:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_device_group:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_ai:
 			if (external->address)
@@ -3259,23 +3275,23 @@ static void hs_global_reconcile_write(
 			break;
 		case _hs_type_ai_command_list:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_starting_profile:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_conversation:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_navpoint:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_hud_message:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_object_list:
 			if (external->address)
@@ -3315,23 +3331,23 @@ static void hs_global_reconcile_write(
 			break;
 		case _hs_type_enum_game_difficulty:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_enum_team:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_enum_ai_default_state:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_enum_actor_type:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_enum_hud_corner:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		case _hs_type_object:
 			if (external->address)
@@ -3359,7 +3375,7 @@ static void hs_global_reconcile_write(
 			break;
 		case _hs_type_object_name:
 			if (external->address)
-				*(short *)external->address = (short)global->value;
+				*(short *)external->address = hs_value_short(global->value);
 			break;
 		default:
 			display_assert(NULL, "c:\\halo\\SOURCE\\hs\\hs_runtime.c", 0x671, TRUE);

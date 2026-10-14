@@ -56,6 +56,7 @@ CPU core: GX2 must be called from the core it was started on.
 #include <gx2/utils.h>
 #include <whb/gfx.h>
 #include <cafeglsl/CafeGLSLCompiler.h>
+#include <coreinit/thread.h>
 
 #include <ctype.h>
 #include <malloc.h>
@@ -71,6 +72,15 @@ declares them without renaming the calls */
 
 /* the game's log (port/linux/src/platform.h) */
 void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)));
+/* (port/linux/src/port_config.h) */
+long config_integer(const char *name);
+int config_boolean(const char *name);
+
+/* debug.wiiu_draw_nothing: the game's draws are skipped */
+static int draw_nothing;
+/* what the GPU has done: the heartbeat logs it (wiiu_main.c) */
+volatile unsigned int wiiu_gpu_flips, wiiu_gpu_waits_given_up;
+volatile unsigned long long wiiu_gpu_submitted, wiiu_gpu_retired;
 
 /* the screen: what the renderer is told it draws into (the game's picture
 is letterboxed into it at presentation) */
@@ -405,6 +415,15 @@ of per-frame parts that are reused only once their frame is done */
 #define CONSTANT_RING_PART 0x40000
 static unsigned char *constant_ring;
 static unsigned long constant_ring_part, constant_ring_offset;
+
+/* the game's uniforms when its shaders use uniform blocks
+(debug.gpu_uniform_blocks): a copy for each change, in a ring of per-frame
+parts like the attribute values' */
+#define BLOCK_RING_PART 0x200000
+static unsigned char *block_ring;
+static unsigned long block_ring_offset;
+static int uniform_blocks;
+static GX2ShaderMode shader_mode = GX2_SHADER_MODE_UNIFORM_REGISTER;
 
 static void internal_programs_initialize(void);
 
@@ -825,11 +844,69 @@ static int fetch_shader_make(GX2FetchShader *fetch, GX2AttribStream *streams, un
 	return 1;
 }
 
+/* the free memory, in the log: the shader compiler is large, and running
+out inside it would look like a crash with no message. (wut gives newlib's
+malloc all of the system's heap at start-up, so the system's own count of
+free memory reads 0: newlib's is the one that counts.) The largest block is
+found by asking for less and less, each block given back at once. */
+void wiiu_alloc_quiet(int quiet);
+
+static void log_free_memory(const char *when)
+{
+	struct mallinfo info = mallinfo();
+	unsigned long low = 0, high = 1024UL * 1024 * 1024;
+
+	wiiu_alloc_quiet(1);
+	while (high - low > 64 * 1024)
+	{
+		unsigned long middle = low + (high - low) / 2;
+		void *block = malloc(middle);
+
+		if (block)
+		{
+			free(block);
+			low = middle;
+		}
+		else
+			high = middle;
+	}
+	wiiu_alloc_quiet(0);
+	platform_log("GX2: memory %s: heap %lu KB, %lu KB in use, %lu KB free in it; largest block now %lu KB",
+		when, (unsigned long)info.arena / 1024, (unsigned long)info.uordblks / 1024,
+		(unsigned long)info.fordblks / 1024, low / 1024);
+}
+
+/* the stack of the thread that asks for a compile: the compiler goes deep */
+static void log_stack(const char *when)
+{
+	OSThread *thread = OSGetCurrentThread();
+	char here;
+
+	platform_log("GX2: stack %s: thread %p (%s), %lu KB left of %lu KB", when, (void *)thread,
+		OSGetThreadName(thread) ? OSGetThreadName(thread) : "no name",
+		(unsigned long)((char *)&here - (char *)thread->stackEnd) / 1024,
+		(unsigned long)((char *)thread->stackStart - (char *)thread->stackEnd) / 1024);
+}
+
+/* the shader compiler, started once, by the first to need it */
+static void compiler_start(void)
+{
+	static int started;
+
+	if (started)
+		return;
+	started = 1;
+	InitGLSLCompiler();
+	platform_log("GX2: shader compiler %s", GetGLSLCompilerVersion());
+}
+
 static int internal_program_make(struct internal_program *program, const char *vertex_source,
 	const char *pixel_source, const char *what)
 {
 	char log[1024];
 
+	log_free_memory("before compiling");
+	log_stack("before compiling");
 	platform_log("GX2: compiling the %s program", what);
 	log[0] = 0;
 	if (CompileShaderPair(vertex_source, pixel_source, GLSL_COMPILE_REGISTER, &program->vertex, &program->pixel,
@@ -968,6 +1045,48 @@ static void targets_bind(const struct draw_targets *targets)
 
 /* ---------- uniform registers */
 
+static void shader_mode_set(GX2ShaderMode mode)
+{
+	if (shader_mode != mode)
+	{
+		shader_mode = mode;
+		GX2SetShaderMode(mode);
+	}
+}
+
+/* a stage's uniforms copied as its uniform block: Latte reads blocks in
+little-endian words */
+static void block_load(const GX2UniformBlock *blocks, unsigned int block_count, const float *registers,
+	unsigned int register_count, int pixel)
+{
+	unsigned int index, word;
+
+	for (index = 0; index < block_count; index++)
+	{
+		uint32_t size = blocks[index].size, *copy;
+		const uint32_t *source = (const uint32_t *)registers;
+
+		if (!size)
+			continue;
+		if (!block_ring || block_ring_offset + size > BLOCK_RING_PART)
+		{
+			static int said;
+
+			log_once(&said, "the ring for uniform blocks is full");
+			return;
+		}
+		copy = (uint32_t *)(block_ring + constant_ring_part * BLOCK_RING_PART + block_ring_offset);
+		block_ring_offset += (size + GX2_UNIFORM_BLOCK_ALIGNMENT - 1) & ~(GX2_UNIFORM_BLOCK_ALIGNMENT - 1);
+		for (word = 0; word < size / 4; word++)
+			copy[word] = word >= register_count ? 0 : uniform_blocks > 1 ? source[word] : __builtin_bswap32(source[word]);
+		GX2Invalidate((GX2InvalidateMode)(GX2_INVALIDATE_MODE_CPU | GX2_INVALIDATE_MODE_UNIFORM_BLOCK), copy, size);
+		if (pixel)
+			GX2SetPixelUniformBlock(blocks[index].offset, size, copy);
+		else
+			GX2SetVertexUniformBlock(blocks[index].offset, size, copy);
+	}
+}
+
 static void registers_mark(struct gl_program *program, int pixel, unsigned int first, unsigned int count)
 {
 	unsigned int *dirty_first = pixel ? &program->pixel_dirty_first : &program->vertex_dirty_first;
@@ -991,7 +1110,16 @@ static void registers_load(struct gl_program *program)
 		program->pixel_dirty_first = 0;
 		program->pixel_dirty_last = program->pixel_register_count;
 	}
-	if (program->vertex_dirty_last > program->vertex_dirty_first)
+	if (program->vertex->mode == GX2_SHADER_MODE_UNIFORM_BLOCK)
+	{
+		if (program->vertex_dirty_last > program->vertex_dirty_first)
+			block_load(program->vertex->uniformBlocks, program->vertex->uniformBlockCount,
+				program->vertex_registers, program->vertex_register_count, 0);
+		if (program->pixel_dirty_last > program->pixel_dirty_first)
+			block_load(program->pixel->uniformBlocks, program->pixel->uniformBlockCount,
+				program->pixel_registers, program->pixel_register_count, 1);
+	}
+	else if (program->vertex_dirty_last > program->vertex_dirty_first)
 	{
 		/* (whole registers, four floats each) */
 		unsigned int first = program->vertex_dirty_first & ~3u;
@@ -999,7 +1127,7 @@ static void registers_load(struct gl_program *program)
 
 		GX2SetVertexUniformReg(first, last - first, program->vertex_registers + first);
 	}
-	if (program->pixel_dirty_last > program->pixel_dirty_first)
+	if (program->pixel->mode != GX2_SHADER_MODE_UNIFORM_BLOCK && program->pixel_dirty_last > program->pixel_dirty_first)
 	{
 		unsigned int first = program->pixel_dirty_first & ~3u;
 		unsigned int last = (program->pixel_dirty_last + 3) & ~3u;
@@ -1409,6 +1537,113 @@ static void state_apply(const struct draw_targets *targets)
 	gl.dirty = 0;
 }
 
+/* port (debugging, temporary): debug.gpu_trace_frame also logs, for each
+draw of that frame (counted here in presented frames), the state this
+layer gives GX2 */
+static unsigned long presented_frames;
+static long trace_frame_number = -2;
+
+static int tracing(void)
+{
+	if (trace_frame_number == -2)
+		trace_frame_number = config_integer("debug.gpu_trace_frame");
+	/* (and 400 frames later, by when the intro has given way to the menu) */
+	return trace_frame_number >= 0 && (presented_frames == (unsigned long)trace_frame_number ||
+		presented_frames == (unsigned long)trace_frame_number + 400);
+}
+
+static void trace_state(const struct gl_program *program, const struct draw_targets *targets)
+{
+	unsigned int index;
+
+	platform_log("GX2 draw: program %u linked %d, target %ux%u screen %d color %p depth %p, viewport %d,%d %dx%d "
+		"range %g-%g, scissor %d %d,%d %dx%d", gl.program, program->linked, targets->width, targets->height,
+		targets->screen, (void *)targets->color, (void *)targets->depth, gl.viewport[0], gl.viewport[1],
+		gl.viewport[2], gl.viewport[3], gl.depth_range[0], gl.depth_range[1], gl.scissor_test, gl.scissor[0],
+		gl.scissor[1], gl.scissor[2], gl.scissor[3]);
+	platform_log("GX2 draw:   depth test %d mask %d func %04x, stencil %d, blend %d %04x/%04x eq %04x, "
+		"color mask %d%d%d%d, cull %d mode %04x front %04x, offset %d",
+		gl.depth_test, gl.depth_mask, gl.depth_function, gl.stencil_test, gl.blend, gl.blend_source,
+		gl.blend_destination, gl.blend_equation, gl.color_mask[0], gl.color_mask[1], gl.color_mask[2],
+		gl.color_mask[3], gl.cull_face, gl.cull_mode, gl.front_face, gl.polygon_offset_fill);
+	for (index = 0; index < program->vertex->attribVarCount; index++)
+	{
+		const GX2AttribVar *variable = &program->vertex->attribVars[index];
+		const struct attribute *attribute = variable->location < ATTRIBUTE_COUNT ?
+			&gl.attributes[variable->location] : NULL;
+		struct gl_buffer *buffer = attribute && attribute->enabled ? name_get(&buffers, attribute->buffer) : NULL;
+
+		if (!attribute)
+			continue;
+		if (buffer && buffer->data && attribute->offset + 16 <= buffer->size)
+		{
+			const float *first = (const float *)(buffer->data + attribute->offset);
+
+			platform_log("GX2 draw:   %s at %u: buffer %u size %lu offset %lu stride %d, type %04x x%d, first %g %g %g %g",
+				variable->name, variable->location, attribute->buffer, buffer->size, attribute->offset,
+				attribute->stride, attribute->type, attribute->size, first[0], first[1], first[2], first[3]);
+			if (variable->location == 0 && attribute->offset + 32 <= buffer->size)
+			{
+				const unsigned char *bytes = buffer->data + attribute->offset;
+				char hex[3 * 32 + 1];
+				unsigned int byte;
+
+				for (byte = 0; byte < 32; byte++)
+					snprintf(hex + 3 * byte, 4, "%02x ", bytes[byte]);
+				platform_log("GX2 draw:     first vertex bytes: %s", hex);
+			}
+		}
+		else
+		{
+			platform_log("GX2 draw:   %s at %u: enabled %d buffer %u (none usable), value %g %g %g %g",
+				variable->name, variable->location, attribute->enabled, attribute->buffer, attribute->value[0],
+				attribute->value[1], attribute->value[2], attribute->value[3]);
+		}
+	}
+	for (index = 0; index < program->uniform_count; index++)
+	{
+		const struct uniform_entry *uniform = &program->uniforms[index];
+
+		if (uniform->sampler)
+			continue;
+		if (uniform->vertex_offset >= 0)
+		{
+			const float *value = program->vertex_registers + uniform->vertex_offset;
+
+			platform_log("GX2 draw:   vs %s at %d x%u: %g %g %g %g", uniform->name, uniform->vertex_offset,
+				uniform->count, value[0], value[1], value[2], value[3]);
+			if (!strcmp(uniform->name, "c"))
+			{
+				static const unsigned int shown[] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+					18, 19, 28, 29, 30, 31, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 185, 186, 187, 188, 189, 190, 191 };
+				unsigned int element;
+
+				for (element = 0; element < sizeof(shown) / sizeof(shown[0]); element++)
+				{
+					if (shown[element] < uniform->count)
+					{
+						value = program->vertex_registers + uniform->vertex_offset + shown[element] * 4;
+						platform_log("GX2 draw:     c[%u] = %g %g %g %g", shown[element], value[0], value[1],
+							value[2], value[3]);
+					}
+				}
+			}
+		}
+		if (uniform->pixel_offset >= 0)
+		{
+			const float *value = program->pixel_registers + uniform->pixel_offset;
+
+			platform_log("GX2 draw:   ps %s at %d x%u: %g %g %g %g", uniform->name, uniform->pixel_offset,
+				uniform->count, value[0], value[1], value[2], value[3]);
+		}
+	}
+	platform_log("GX2 draw:   registers vs %u ps %u; vertex shader %p: %u attributes, %u uniforms, %u bytes; "
+		"pixel shader %p: %u uniforms, %u samplers", program->vertex_register_count, program->pixel_register_count,
+		(void *)program->vertex, program->vertex->attribVarCount, program->vertex->uniformVarCount,
+		program->vertex->size, (void *)program->pixel, program->pixel->uniformVarCount,
+		program->pixel->samplerVarCount);
+}
+
 /* everything a draw of the current program needs set; FALSE: draw nothing */
 static int draw_prepare(void)
 {
@@ -1416,15 +1651,102 @@ static int draw_prepare(void)
 	struct draw_targets targets;
 
 	if (!video_ready || !program || !program->linked)
+	{
+		if (tracing())
+			platform_log("GX2 draw: skipped: ready %d program %u %s", video_ready, gl.program,
+				program ? "not linked" : "missing");
 		return 0;
+	}
 	if (!targets_get(gl.draw_framebuffer, &targets))
+	{
+		if (tracing())
+			platform_log("GX2 draw: skipped: no targets for framebuffer %u", gl.draw_framebuffer);
 		return 0;
+	}
+	if (tracing())
+		trace_state(program, &targets);
 	state_apply(&targets);
+	shader_mode_set(program->vertex->mode);
 	GX2SetVertexShader(program->vertex);
 	GX2SetPixelShader(program->pixel);
 	registers_load(program);
 	textures_bind(program);
 	return attributes_bind(program);
+}
+
+/* port (debugging, temporary): debug.wiiu_time_draws waits for the GPU
+after each of the game's draws in its first frames and logs, in full,
+the draws it took long over (the console's GPU once took over a second a
+frame, while the same frames without the game's draws came at once) */
+static int time_draws = -1;
+static unsigned int draws_this_frame, slow_draws_logged;
+
+/* with debug.wiiu_time_draws, in the first frames: waits for the GPU to
+finish what has been sent so far; TRUE when that took 20 ms or more (or
+had not finished after 3 s), and then logs it as a step named what */
+static int gpu_step_timed(const char *what)
+{
+	OSTime start, timestamp, took;
+	int finished = 1;
+
+	if (time_draws < 0)
+	{
+		time_draws = config_boolean("debug.wiiu_time_draws");
+		if (time_draws)
+			platform_log("GX2: timing each step sent to the GPU (debug.wiiu_time_draws)");
+	}
+	if (!time_draws || !video_ready || presented_frames >= 30 || slow_draws_logged >= 24)
+		return 0;
+	start = OSGetSystemTime();
+	GX2Flush();
+	timestamp = GX2GetLastSubmittedTimeStamp();
+	while (GX2GetRetiredTimeStamp() < timestamp)
+	{
+		if (OSGetSystemTime() - start > OSSecondsToTicks(3))
+		{
+			finished = 0;
+			break;
+		}
+		OSSleepTicks(OSMicrosecondsToTicks(100));
+	}
+	took = OSGetSystemTime() - start;
+	if (finished && took < OSMillisecondsToTicks(20))
+		return 0;
+	slow_draws_logged++;
+	platform_log("GX2 slow step: frame %lu, after draw %u: %s took %llu ms%s", presented_frames, draws_this_frame,
+		what, (unsigned long long)OSTicksToMilliseconds(took), finished ? "" : " (still not done after 3 s)");
+	return 1;
+}
+
+static void draw_timed(GLenum mode, GLsizei count, int indexed, GLenum type, const unsigned char *indices,
+	GLint first)
+{
+	struct gl_program *program;
+	struct draw_targets targets;
+
+	draws_this_frame++;
+	if (!gpu_step_timed(indexed ? "an indexed draw" : "a draw"))
+		return;
+	platform_log("GX2 slow step:   mode %04x count %d %s %d", mode, count, indexed ? "base vertex" : "first", first);
+	if (indexed && indices)
+	{
+		unsigned long lowest = 0xffffffff, highest = 0, value;
+		GLsizei index;
+
+		for (index = 0; index < count; index++)
+		{
+			value = type == GL_UNSIGNED_INT ? ((const uint32_t *)indices)[index] : ((const uint16_t *)indices)[index];
+			if (value < lowest)
+				lowest = value;
+			if (value > highest)
+				highest = value;
+		}
+		platform_log("GX2 slow step:   indices %s from %lu to %lu", type == GL_UNSIGNED_INT ? "32-bit" : "16-bit",
+			lowest, highest);
+	}
+	program = name_get(&programs, gl.program);
+	if (program && targets_get(gl.draw_framebuffer, &targets))
+		trace_state(program, &targets);
 }
 
 /* ---------- rectangles: clears, blits and mipmaps */
@@ -1446,6 +1768,16 @@ static void internal_targets_state(const struct draw_targets *targets, const uin
 		GX2_POLYGON_MODE_TRIANGLE, FALSE, FALSE, FALSE);
 }
 
+/* after GX2CopySurface, which on the console draws with state of its own
+(Cemu does the copy without touching it): ours again, all of it */
+static void gpu_state_restore(void)
+{
+	GX2SetContextState(context_state);
+	current_color = NULL;
+	current_depth = NULL;
+	internal_done();
+}
+
 /* a rectangle (clip space corners) from the internal program */
 static void internal_rectangle(struct internal_program *program, const float rectangle[4], const float *source,
 	float depth, const float *color)
@@ -1453,6 +1785,7 @@ static void internal_rectangle(struct internal_program *program, const float rec
 	float values[4];
 
 	GX2SetFetchShader(&program->fetch);
+	shader_mode_set(GX2_SHADER_MODE_UNIFORM_REGISTER);
 	GX2SetVertexShader(program->vertex);
 	GX2SetPixelShader(program->pixel);
 	if (program->rectangle >= 0)
@@ -1467,6 +1800,7 @@ static void internal_rectangle(struct internal_program *program, const float rec
 	if (program->color >= 0 && color)
 		GX2SetPixelUniformReg((uint32_t)program->color, 4, color);
 	GX2DrawEx(GX2_PRIMITIVE_MODE_TRIANGLE_STRIP, 4, 0, 1);
+	gpu_step_timed(color ? "a clear" : "a copy (blit or clear)");
 }
 
 static void clear_targets(const struct draw_targets *targets, GLbitfield mask)
@@ -1764,14 +2098,73 @@ static void GL_APIENTRY wiiu_glPixelStorei(GLenum name, GLint value)
 	(void)value;
 }
 
+/* The read framebuffer's pixels, as 32-bit RGBA (only what the renderer's
+screenshots ask for): its colour texture drawn into a linear colour buffer,
+which the CPU reads once the GPU is done. (A drawn-into buffer, not a
+GX2CopySurface: Cemu writes a render target back to memory for the CPU,
+but left a copy's destination at zero, run r21.) Rows come out as they are
+in the buffer. */
 static void GL_APIENTRY wiiu_glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format,
 	GLenum type, void *pixels)
 {
-	static int said;
+	static int said_target, said_memory;
+	struct draw_targets source, destination;
+	GX2ColorBuffer buffer;
+	float source_pixels[4], destination_pixels[4];
+	GLsizei row;
 
-	(void)x; (void)y; (void)format; (void)type;
-	log_once(&said, "glReadPixels is not supported (screenshots read black)");
+	(void)format; (void)type;
 	memset(pixels, 0, (size_t)width * (size_t)height * 4);
+	if (!video_ready || width <= 0 || height <= 0)
+		return;
+	if (!targets_get(gl.read_framebuffer, &source) || !source.color_texture)
+	{
+		log_once(&said_target, "glReadPixels: the read framebuffer has no colour texture (screenshots read black)");
+		return;
+	}
+	memset(&buffer, 0, sizeof(buffer));
+	buffer.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
+	buffer.surface.width = (uint32_t)width;
+	buffer.surface.height = (uint32_t)height;
+	buffer.surface.depth = 1;
+	buffer.surface.mipLevels = 1;
+	buffer.surface.format = GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8;
+	buffer.surface.aa = GX2_AA_MODE1X;
+	buffer.surface.use = GX2_SURFACE_USE_COLOR_BUFFER | GX2_SURFACE_USE_TEXTURE;
+	buffer.surface.tileMode = GX2_TILE_MODE_LINEAR_ALIGNED;
+	buffer.viewNumSlices = 1;
+	GX2CalcSurfaceSizeAndAlignment(&buffer.surface);
+	GX2InitColorBufferRegs(&buffer);
+	buffer.surface.image = gpu_alloc(buffer.surface.alignment, buffer.surface.imageSize);
+	if (!buffer.surface.image)
+	{
+		log_once(&said_memory, "glReadPixels: no memory for the copy (screenshots read black)");
+		return;
+	}
+	/* (the CPU's cache emptied of it first, so its lines cannot be written
+	back over what the GPU puts there) */
+	DCFlushRange(buffer.surface.image, buffer.surface.imageSize);
+	memset(&destination, 0, sizeof(destination));
+	destination.color = &buffer;
+	destination.width = (unsigned int)width;
+	destination.height = (unsigned int)height;
+	source_pixels[0] = (float)x;
+	source_pixels[1] = (float)y;
+	source_pixels[2] = (float)(x + width);
+	source_pixels[3] = (float)(y + height);
+	destination_pixels[0] = 0.0f;
+	destination_pixels[1] = 0.0f;
+	destination_pixels[2] = (float)width;
+	destination_pixels[3] = (float)height;
+	blit_texture(source.color_texture, 0, source_pixels, &destination, destination_pixels, 0);
+	/* (the next draw binds its own colour buffer again) */
+	current_color = NULL;
+	GX2DrawDone();
+	DCInvalidateRange(buffer.surface.image, buffer.surface.imageSize);
+	for (row = 0; row < height; row++)
+		memcpy((unsigned char *)pixels + (size_t)row * (size_t)width * 4,
+			(const unsigned char *)buffer.surface.image + (size_t)row * buffer.surface.pitch * 4, (size_t)width * 4);
+	gpu_free(buffer.surface.image);
 }
 
 static void GL_APIENTRY wiiu_glFinish(void)
@@ -1895,6 +2288,8 @@ static void texture_write(struct gl_texture *texture, unsigned int level, unsign
 				(const unsigned char *)pixels + row * width * 4, width * 4);
 		GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, staging.image, staging.imageSize);
 		GX2CopySurfaceEx(&staging, 0, 0, surface, level, slice, 1, &rectangle, &point);
+		gpu_step_timed("a texture copy into a render texture (GX2CopySurfaceEx)");
+		gpu_state_restore();
 		gpu_free(staging.image);
 		texture->gpu_written = 1;
 		return;
@@ -2178,7 +2573,7 @@ static void GL_APIENTRY wiiu_glCopyImageSubData(GLuint source_name, GLenum sourc
 	GX2CopySurfaceEx(&source->texture.surface, (uint32_t)source_level, (uint32_t)source_z,
 		&destination->texture.surface, (uint32_t)destination_level, (uint32_t)destination_z, 1, &rectangle, &point);
 	destination->gpu_written = 1;
-	internal_done();
+	gpu_state_restore();
 }
 
 /* ---------- GL: samplers */
@@ -2591,7 +2986,12 @@ static void GL_APIENTRY wiiu_glDrawArrays(GLenum mode, GLint first, GLsizei coun
 {
 	if (count <= 0 || !draw_prepare())
 		return;
+	if (tracing())
+		platform_log("GX2 draw: arrays mode %04x count %d first %d", mode, count, first);
+	if (draw_nothing)
+		return;
 	GX2DrawEx(primitive_mode(mode), (uint32_t)count, (uint32_t)first, 1);
+	draw_timed(mode, count, 0, 0, NULL, first);
 }
 
 static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint base_vertex)
@@ -2601,11 +3001,14 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
 
 	if (count <= 0 || !buffer || !buffer->data || (unsigned long)indices >= buffer->size || !draw_prepare())
 		return;
+	if (draw_nothing)
+		return;
 	pointer = buffer->data + (unsigned long)indices;
 	/* (the indices are the CPU's 16-bit numbers, in its byte order; the
 	base vertex wraps around, as a negative one must) */
 	GX2DrawIndexedEx(primitive_mode(mode), (uint32_t)count,
 		type == GL_UNSIGNED_INT ? GX2_INDEX_TYPE_U32 : GX2_INDEX_TYPE_U16, pointer, (uint32_t)base_vertex, 1);
+	draw_timed(mode, count, 1, type, pointer, base_vertex);
 }
 
 static void GL_APIENTRY wiiu_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices)
@@ -2741,6 +3144,7 @@ static void GL_APIENTRY wiiu_glCompileShader(GLuint name)
 	int pixel;
 	char *source;
 	GX2ShaderMode mode;
+	int attempt;
 
 	if (!shader || !shader->source)
 		return;
@@ -2750,13 +3154,27 @@ static void GL_APIENTRY wiiu_glCompileShader(GLuint name)
 		return;
 	shader->log[0] = 0;
 	if (pixel)
-		mode = CompilePixelShader(source, GLSL_COMPILE_REGISTER, &shader->pixel, shader->log, sizeof(shader->log),
+		mode = CompilePixelShader(source, uniform_blocks ? GLSL_COMPILE_BLOCK : GLSL_COMPILE_REGISTER, &shader->pixel, shader->log, sizeof(shader->log),
 			GLSL_COMPILER_FLAG_NONE);
 	else
-		mode = CompileVertexShader(source, GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
+		mode = CompileVertexShader(source, uniform_blocks ? GLSL_COMPILE_BLOCK : GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
 			GLSL_COMPILER_FLAG_NONE);
-	free(source);
 	shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
+	/* CafeGLSL now and then hands back an empty shell for a whole vertex
+	shader: 16 bytes, no inputs, no uniforms, with no error (the game's very
+	first one, compiled as the intro starts; r18 and r19). A vertex shader
+	of the game's always reads an input, so one with none is compiled again;
+	the second try has come back whole. */
+	for (attempt = 0; attempt < 2 && shader->compiled && !pixel && !shader->vertex->attribVarCount; attempt++)
+	{
+		platform_log("GX2: vertex shader %u came back empty (%u bytes); compiling it again", name,
+			(unsigned)shader->vertex->size);
+		shader->log[0] = 0;
+		mode = CompileVertexShader(source, uniform_blocks ? GLSL_COMPILE_BLOCK : GLSL_COMPILE_REGISTER, &shader->vertex, shader->log, sizeof(shader->log),
+			GLSL_COMPILER_FLAG_NONE);
+		shader->compiled = mode != GLSL_SHADER_MODE_ERROR;
+	}
+	free(source);
 	/* the GPU reads the compiled code from memory, past the CPU's cache */
 	if (shader->compiled && pixel)
 		GX2Invalidate(GX2_INVALIDATE_MODE_CPU_SHADER, shader->pixel->program, shader->pixel->size);
@@ -2933,6 +3351,14 @@ static void GL_APIENTRY wiiu_glLinkProgram(GLuint name)
 	program->vertex_dirty_first = program->pixel_dirty_first = ~0u;
 	program->vertex_dirty_last = program->pixel_dirty_last = 0;
 	program->linked = 1;
+	/* (DEBUGGING, TEMPORARY: what each program's compiled shaders hold) */
+	if (config_integer("debug.gpu_trace_frame") >= 0)
+		platform_log("GX2 link: program %u: vertex shader %u at %p: %u attributes, %u uniforms, %u bytes, "
+			"%u registers; pixel shader %u at %p: %u uniforms, %u samplers, %u registers", name,
+			program->vertex_name, (void *)program->vertex, program->vertex->attribVarCount,
+			program->vertex->uniformVarCount, program->vertex->size, program->vertex_register_count,
+			program->pixel_name, (void *)program->pixel, program->pixel->uniformVarCount,
+			program->pixel->samplerVarCount, program->pixel_register_count);
 	if (registers_program == program)
 		registers_program = NULL;
 }
@@ -3139,6 +3565,26 @@ void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int
 	buffer_write(bound_buffer(target), offset, size, data);
 }
 
+/* waits for the GPU to finish everything up to a timestamp, but at most
+two seconds: on the console a stopped GPU would otherwise stop the game
+with it, and the log would say nothing */
+static void wait_for_gpu(OSTime timestamp)
+{
+	OSTime start = OSGetSystemTime();
+
+	while (GX2GetRetiredTimeStamp() < timestamp)
+	{
+		if (OSGetSystemTime() - start > OSSecondsToTicks(2))
+		{
+			if (wiiu_gpu_waits_given_up++ < 8)
+				platform_log("GX2: the GPU has not finished a frame in 2 s (submitted %llu, done %llu)",
+					(unsigned long long)GX2GetLastSubmittedTimeStamp(), (unsigned long long)GX2GetRetiredTimeStamp());
+			return;
+		}
+		OSSleepTicks(OSMicrosecondsToTicks(500));
+	}
+}
+
 /* the frame just sent to the GPU used the stream buffers of this slot */
 void host_gl_fence_frame(unsigned int slot)
 {
@@ -3152,10 +3598,11 @@ void host_gl_wait_frame(unsigned int slot)
 {
 	slot %= FENCE_SLOTS;
 	if (video_ready && frame_fences[slot])
-		GX2WaitTimeStamp(frame_fences[slot]);
+		wait_for_gpu(frame_fences[slot]);
 	/* (the attribute values' ring follows the same frames) */
 	constant_ring_part = slot;
 	constant_ring_offset = 0;
+	block_ring_offset = 0;
 }
 
 /* ---------- the platform's video (sdl_platform.h) */
@@ -3205,6 +3652,18 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 	GX2InitColorBufferRegs(&screen);
 	screen.surface.image = gpu_alloc(screen.surface.alignment, screen.surface.imageSize);
 	constant_ring = gpu_alloc(0x100, CONSTANT_RING_PART * FENCE_SLOTS);
+	draw_nothing = config_boolean("debug.wiiu_draw_nothing");
+	if (draw_nothing)
+		platform_log("GX2: the game's draws are skipped (debug.wiiu_draw_nothing)");
+	uniform_blocks = config_boolean("debug.gpu_uniform_blocks");
+	/* (debug.gpu_uniform_blocks_unswapped: the copies in the CPU's order) */
+	if (uniform_blocks && config_boolean("debug.gpu_uniform_blocks_unswapped"))
+		uniform_blocks = 2;
+	if (uniform_blocks)
+	{
+		block_ring = gpu_alloc(GX2_UNIFORM_BLOCK_ALIGNMENT, BLOCK_RING_PART * FENCE_SLOTS);
+		platform_log("GX2: the game's shaders use uniform blocks%s", block_ring ? "" : " (no memory for them)");
+	}
 	if (!screen.surface.image || !constant_ring)
 		return 0;
 	memset(screen.surface.image, 0, screen.surface.imageSize);
@@ -3235,8 +3694,8 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 		gl.attributes[unit].value[3] = 1.0f;
 
 	platform_log("GX2: screen and context set up");
-	InitGLSLCompiler();
-	platform_log("GX2: shader compiler %s", GetGLSLCompilerVersion());
+	log_free_memory("before the shader compiler starts");
+	compiler_start();
 	internal_programs_initialize();
 	video_ready = 1;
 	platform_log("GX2: ready, drawing at %dx%d", SCREEN_WIDTH, SCREEN_HEIGHT);
@@ -3264,8 +3723,14 @@ void platform_video_swap(void)
 		return;
 	GX2CopyColorBufferToScanBuffer(&screen, GX2_SCAN_TARGET_TV);
 	GX2CopyColorBufferToScanBuffer(&screen, GX2_SCAN_TARGET_DRC);
+	gpu_step_timed("the frame's copies to the TV and GamePad");
 	GX2SwapScanBuffers();
 	GX2Flush();
+	{
+		extern volatile unsigned int wiiu_swap_count;
+
+		wiiu_swap_count++;
+	}
 	if (!screen_shown)
 	{
 		screen_shown = 1;
@@ -3275,7 +3740,24 @@ void platform_video_swap(void)
 	/* no more than two frames waiting to be shown */
 	GX2GetSwapStatus(&swaps, &flips, &last_flip, &last_vsync);
 	if (swaps - flips > 2)
-		GX2WaitForFlip();
+	{
+		/* (at most two seconds of vertical blanks: on the console the
+		frames once never reached the screen and this wait never ended) */
+		int vsyncs = 0;
+
+		while (swaps - flips > 2 && vsyncs++ < 120)
+		{
+			GX2WaitForVsync();
+			GX2GetSwapStatus(&swaps, &flips, &last_flip, &last_vsync);
+		}
+		if (swaps - flips > 2 && wiiu_gpu_waits_given_up++ < 8)
+			platform_log("GX2: no frame reached the screen in 2 s (%u sent, %u shown; GPU submitted %llu, done %llu)",
+				swaps, flips, (unsigned long long)GX2GetLastSubmittedTimeStamp(),
+				(unsigned long long)GX2GetRetiredTimeStamp());
+	}
+	wiiu_gpu_flips = flips;
+	wiiu_gpu_submitted = GX2GetLastSubmittedTimeStamp();
+	wiiu_gpu_retired = GX2GetRetiredTimeStamp();
 	/* the copies set state of their own: ours again, all of it, and the
 	GPU's vertex caches cleared of last frame's vertices */
 	GX2SetContextState(context_state);
@@ -3283,6 +3765,10 @@ void platform_video_swap(void)
 	current_depth = NULL;
 	internal_done();
 	GX2Invalidate(GX2_INVALIDATE_MODE_ATTRIBUTE_BUFFER, (void *)0, 0xffffffff);
+	if (time_draws > 0 && presented_frames < 30)
+		platform_log("GX2: frame %lu had %u draws", presented_frames, draws_this_frame);
+	draws_this_frame = 0;
+	presented_frames++;
 	gpu_free_collect();
 }
 

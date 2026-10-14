@@ -306,7 +306,9 @@ struct shader_transparent_chicago_definition
 {
 	struct shader shader;
 	struct shader_transparent transparent;
-	unsigned long extra_flags;
+	/* (a long in the tag, read as its low word: rasterizer_xbox_transparent_geometry.c) */
+	word extra_flags;
+	word pad62;
 	byte reserved64[8];
 };
 
@@ -380,8 +382,28 @@ struct shader_transparent_meter_definition
 	short pad2A;
 	byte reserved2C[32];
 	struct tag_reference map;
-	byte reserved5C[0xA8];
+	byte reserved5C[32];
+	real_rgb_color gradient_min_color;
+	real_rgb_color gradient_max_color;
+	real_rgb_color background_color;
+	real_rgb_color flash_color;
+	real_rgb_color tint_color;
+	real meter_transparency;
+	real background_transparency;
+	byte reservedC0[24];
+	short meter_brightness_source;
+	short flash_brightness_source;
+	short value_source;
+	short gradient_source;
+	short flash_extension_source;
+	word padE2;
+	byte reservedE4[32];
 };
+
+typedef char verify_shader_transparent_meter_brightness_source_offset[
+	offsetof(struct shader_transparent_meter_definition, meter_brightness_source) == 0xD8 ? 1 : -1];
+typedef char verify_shader_transparent_meter_size[
+	sizeof(struct shader_transparent_meter_definition) == 0x104 ? 1 : -1];
 
 /* rasterizer_xbox_water.c */
 
@@ -558,11 +580,23 @@ struct shader_environment_definition
 	/* specular */
 	word specular_flags;
 	short specular_type;
-	byte reserved280[0x50];
+	long unused280[4];
+	real specular_brightness;
+	long unused294[5];
+	real_rgb_color view_perpendicular_color;
+	real_rgb_color view_parallel_color;
+	long unused2C0[4];
 	/* reflection */
 	word reflection_flags;
 	short reflection_type;
-	byte reserved2D4[0x50];
+	real lightmap_brightness_scale;
+	long unused2D8[7];
+	real view_perpendicular_brightness;
+	real view_parallel_brightness;
+	long unused2FC[4];
+	real mirror_index_of_refraction;
+	real mirror_depth;
+	long unused314[4];
 	struct tag_reference reflection_cube_map;
 	byte reserved334[0x10];
 };
@@ -631,6 +665,10 @@ typedef char verify_shader_environment_self_illumination_map_offset[
 	offsetof(struct shader_environment_definition, self_illumination_map) == 0x254 ? 1 : -1];
 typedef char verify_shader_environment_specular_flags_offset[
 	offsetof(struct shader_environment_definition, specular_flags) == 0x27C ? 1 : -1];
+typedef char verify_shader_environment_view_parallel_color_offset[
+	offsetof(struct shader_environment_definition, view_parallel_color) == 0x2B4 ? 1 : -1];
+typedef char verify_shader_environment_mirror_depth_offset[
+	offsetof(struct shader_environment_definition, mirror_depth) == 0x310 ? 1 : -1];
 typedef char verify_shader_environment_reflection_flags_offset[
 	offsetof(struct shader_environment_definition, reflection_flags) == 0x2D0 ? 1 : -1];
 typedef char verify_shader_environment_reflection_cube_map_offset[
@@ -1103,14 +1141,27 @@ struct sky_light
 {
 	struct tag_reference lens_flare;
 	char marker_name[TAG_STRING_LENGTH + 1];
-	byte unused30[0x44];
+	byte unused30[0x38];
+	real_euler_angles2d direction;
+	byte unused70[4];
 };
 
 struct sky_definition
 {
 	struct tag_reference model;
 	struct tag_reference animation_graph;
-	byte unused20[0x78];
+	byte unused20[0x38];
+	/* outdoor and indoor fog (sky_definitions.h's sky_atmospheric_fog) */
+	real_rgb_color outdoor_fog_color;
+	byte unused64[8];
+	real outdoor_fog_maximum_density;
+	real outdoor_fog_start_distance;
+	real outdoor_fog_opaque_distance;
+	real_rgb_color indoor_fog_color;
+	byte unused84[8];
+	real indoor_fog_maximum_density;
+	real indoor_fog_start_distance;
+	real indoor_fog_opaque_distance;
 	struct tag_reference indoor_fog_screen;
 	long unusedA8;
 	struct tag_block shader_functions;
@@ -1122,6 +1173,8 @@ typedef char verify_sky_shader_function_size[sizeof(struct sky_shader_function) 
 typedef char verify_sky_animation_size[sizeof(struct sky_animation) == 0x24 ? 1 : -1];
 typedef char verify_sky_light_size[sizeof(struct sky_light) == 0x74 ? 1 : -1];
 typedef char verify_sky_indoor_fog_screen_offset[offsetof(struct sky_definition, indoor_fog_screen) == 0x98 ? 1 : -1];
+typedef char verify_sky_indoor_fog_offset[offsetof(struct sky_definition, indoor_fog_color) == 0x78 ? 1 : -1];
+typedef char verify_sky_light_direction_offset[offsetof(struct sky_light, direction) == 0x68 ? 1 : -1];
 typedef char verify_sky_animations_offset[offsetof(struct sky_definition, animations) == 0xB8 ? 1 : -1];
 typedef char verify_sky_size[sizeof(struct sky_definition) == 0xD0 ? 1 : -1];
 

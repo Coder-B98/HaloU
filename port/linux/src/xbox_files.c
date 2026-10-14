@@ -340,6 +340,30 @@ HANDLE WINAPI CreateFileA(LPCSTR file_name, DWORD desired_access, DWORD share_mo
 	}
 	if ((flags & O_TRUNC) && (flags & O_ACCMODE) == O_RDONLY)
 		flags = (flags & ~O_ACCMODE) | O_RDWR;
+#ifdef __WIIU__
+	/* port: the Wii U's open() (wut's devoptab) only accepts the flag mixes
+	   that match a C fopen mode and fails the rest with EINVAL. Halo opens
+	   saves with write access and OPEN_EXISTING, a plain O_WRONLY, which is
+	   one of those. Rewrite each mix to an equivalent one it accepts. */
+	if ((flags & O_ACCMODE) == O_RDONLY && (flags & O_CREAT))
+		flags = (flags & ~O_ACCMODE) | O_RDWR;
+	if ((flags & O_ACCMODE) == O_WRONLY && !(flags & (O_CREAT | O_TRUNC | O_APPEND)))
+		flags = (flags & ~O_ACCMODE) | O_RDWR;
+	/* OPEN_ALWAYS (O_CREAT alone): "r+" when the file is there, else "w+"
+	(an empty new file either way); no mode keeps the file and creates it */
+	if ((flags & O_CREAT) && !(flags & (O_TRUNC | O_APPEND | O_EXCL)))
+		flags = (flags & ~(O_CREAT | O_ACCMODE)) | O_RDWR | (existed ? 0 : O_CREAT | O_TRUNC);
+	if ((flags & O_TRUNC) && !(flags & O_CREAT))
+	{
+		/* TRUNCATE_EXISTING: only valid on a file that is already there */
+		if (!existed)
+		{
+			SetLastError(ERROR_FILE_NOT_FOUND);
+			return INVALID_HANDLE_VALUE;
+		}
+		flags |= O_CREAT;
+	}
+#endif
 
 	if (existed && (information.flags & _posix_file_is_directory))
 	{
@@ -384,6 +408,56 @@ static ssize_t read_some(struct platform_file *file, void *buffer, size_t count,
 		read(file->descriptor, buffer, count);
 }
 
+#ifdef __WIIU__
+/* port: what the files are doing, for the log's "still running" lines
+(wiiu_main.c): bytes read and written, the last file of each, and a read
+or write still waiting for the card (when it started, and on which file) */
+volatile unsigned long long wiiu_bytes_read, wiiu_bytes_written;
+char wiiu_last_read[64], wiiu_last_written[64];
+volatile unsigned long wiiu_io_started;
+volatile int wiiu_io_writing;
+char wiiu_io_path[64];
+unsigned long wiiu_log_milliseconds(void);
+
+static void wiiu_copy_tail(char *into, const char *path)
+{
+	size_t length = strlen(path);
+	const char *tail = length >= 64 ? path + length - 63 : path;
+
+	memcpy(into, tail, strlen(tail) + 1);
+}
+
+static void wiiu_io_begin(const struct platform_file *file, int writing)
+{
+	wiiu_copy_tail(wiiu_io_path, file->path);
+	wiiu_io_writing = writing;
+	wiiu_io_started = wiiu_log_milliseconds() + 1;
+}
+
+static void wiiu_io_end(const struct platform_file *file, int writing, long done)
+{
+	wiiu_io_started = 0;
+	if (done > 0)
+	{
+		if (writing)
+		{
+			wiiu_bytes_written += (unsigned long)done;
+			wiiu_copy_tail(wiiu_last_written, file->path);
+		}
+		else
+		{
+			wiiu_bytes_read += (unsigned long)done;
+			wiiu_copy_tail(wiiu_last_read, file->path);
+		}
+	}
+}
+#define IO_BEGIN(file, writing) wiiu_io_begin(file, writing)
+#define IO_END(file, writing, done) wiiu_io_end(file, writing, (long)(done))
+#else
+#define IO_BEGIN(file, writing) ((void)0)
+#define IO_END(file, writing, done) ((void)0)
+#endif
+
 static BOOL read_at(struct platform_file *file, LPVOID buffer, DWORD count, LPDWORD bytes_read,
 	BOOL positioned, unsigned long long offset)
 {
@@ -409,7 +483,9 @@ static BOOL read_at(struct platform_file *file, LPVOID buffer, DWORD count, LPDW
 
 		if (bounce && wanted > READ_BOUNCE_SIZE)
 			wanted = READ_BOUNCE_SIZE;
+		IO_BEGIN(file, 0);
 		result = read_some(file, bounce ? staging : (char *)buffer + total, wanted, positioned, offset + total);
+		IO_END(file, 0, result);
 		if (result < 0)
 		{
 			if (errno == EINTR)
@@ -445,9 +521,13 @@ static BOOL write_at(struct platform_file *file, LPCVOID buffer, DWORD count, LP
 
 	while (total < count)
 	{
-		ssize_t result = positioned ?
+		ssize_t result;
+
+		IO_BEGIN(file, 1);
+		result = positioned ?
 			pwrite(file->descriptor, (const char *)buffer + total, count - total, (off_t)(offset + total)) :
 			write(file->descriptor, (const char *)buffer + total, count - total);
+		IO_END(file, 1, result);
 
 		if (result < 0)
 		{
@@ -584,6 +664,26 @@ DWORD WINAPI SetFilePointer(HANDLE handle, LONG distance, PLONG distance_high, D
 		SetLastError(ERROR_INVALID_PARAMETER);
 		return INVALID_SET_FILE_POINTER;
 	}
+#ifdef __WIIU__
+	/* port: the console's SD card cannot seek past the end of a file (Cemu
+	can; console run 1 halted making its first cache file, error 87): the
+	file is lengthened to the new position with zeros first, which the game
+	only does to size its cache files */
+	if (whence == SEEK_SET)
+	{
+		struct posix_file_information information;
+		unsigned long long target = ((unsigned long long)(unsigned long)(distance_high ? *distance_high : 0) << 32) |
+			(unsigned long)distance;
+
+		if (posix_fstat(file->descriptor, &information) == 0 &&
+			target > (((unsigned long long)information.size_high << 32) | information.size_low) &&
+			posix_truncate(file->descriptor, (unsigned long)target, (unsigned long)(target >> 32)) != 0)
+		{
+			platform_set_last_error_from_errno(errno);
+			return INVALID_SET_FILE_POINTER;
+		}
+	}
+#endif
 	if (posix_seek(file->descriptor, distance,
 		distance_high ? *distance_high : (distance < 0 ? -1 : 0), whence, &low, &high) != 0)
 	{

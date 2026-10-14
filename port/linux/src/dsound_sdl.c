@@ -35,10 +35,14 @@ turns the reverb off; audio.enabled = false skips opening a device
 */
 
 #include "platform.h"
+#ifndef __WIIU__
 #include "sdl_platform.h"
+#endif
 #include "port_config.h"
 
+#ifndef __WIIU__
 #include <SDL3/SDL.h>
+#endif
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1101,8 +1105,13 @@ static void mix(float *output, unsigned long frames)
 
 /* ---------- output */
 
-static SDL_AudioStream *audio_stream;
 static BOOL audio_started = FALSE;
+
+#ifdef __WIIU__
+/* the Wii U plays the mix through AX (port/wiiu/src/wiiu_audio.c) */
+int wiiu_audio_start(void (*mixer)(float *output, unsigned long frames));
+#else
+static SDL_AudioStream *audio_stream;
 
 static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream, int additional_amount, int total_amount)
 {
@@ -1123,6 +1132,7 @@ static void SDLCALL audio_callback(void *userdata, SDL_AudioStream *stream, int 
 		additional_amount -= (int)(frames * OUTPUT_CHANNELS * sizeof(float));
 	}
 }
+#endif
 
 /* without a device, drain voices in real time */
 static void *silent_clock_thread(void *parameter)
@@ -1141,14 +1151,26 @@ static void *silent_clock_thread(void *parameter)
 			next.tv_nsec -= 1000000000L;
 			next.tv_sec++;
 		}
+#ifdef __WIIU__
+		{
+			/* (newlib has no clock_nanosleep; wut's nanosleep writes the
+			time left, so it gets somewhere to put it) */
+			struct timespec wait = { 0, 10000000L };
+
+			nanosleep(&wait, &wait);
+		}
+#else
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
+#endif
 	}
 	return NULL;
 }
 
 static void audio_start(void)
 {
+#ifndef __WIIU__
 	SDL_AudioSpec spec;
+#endif
 
 	if (audio_started)
 		return;
@@ -1159,6 +1181,10 @@ static void audio_start(void)
 	resampler_phases_initialize();
 	reverb_initialize();
 
+#ifdef __WIIU__
+	if (config_boolean("audio.enabled") && wiiu_audio_start(mix))
+		return;
+#else
 	if (config_boolean("audio.enabled") && platform_sdl_initialize())
 	{
 		spec.format = SDL_AUDIO_F32;
@@ -1173,6 +1199,7 @@ static void audio_start(void)
 		}
 		platform_log("cannot open an audio device (%s); sound is silent", SDL_GetError());
 	}
+#endif
 	{
 		pthread_t thread;
 

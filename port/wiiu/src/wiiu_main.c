@@ -13,10 +13,14 @@ builds' main thread has (a Wii U program's own is small).
 (No platform.h here: wut's headers and the XDK's both declare BOOL.)
 */
 
+#include <coreinit/core.h>
 #include <coreinit/debug.h>
 #include <coreinit/exception.h>
+#include <coreinit/memorymap.h>
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
+#include <gx2/event.h>
+#include <gx2/swap.h>
 #include <whb/log.h>
 #include <whb/log_cafe.h>
 #include <whb/log_udp.h>
@@ -32,9 +36,18 @@ builds' main thread has (a Wii U program's own is small).
 
 #define DATA_ROOT "fs:/vol/external01/halou"
 #define LOG_PATH DATA_ROOT "/halou.log"
+#define LOG_KEEP 5
 #define GAME_STACK_SIZE (8 * 1024 * 1024)
 
 int halo_xbox_main(void);
+
+/* the C++ start-up (libgcc's eabi.S): the shader compiler's global objects
+built, through __init and the constructor list. gcc puts a call to it at
+the top of every main for the PowerPC EABI, and wut counts on that; clang,
+which builds this file, does not, so main calls it itself. Without it the
+compiler starts but crashes in its first compile, on objects never built
+(T-002, runs r05 to r07). */
+void __eabi(void);
 
 /* ---------- the time in the log
 
@@ -66,6 +79,162 @@ static void log_line(const char *format, ...)
 	va_start(arguments, format);
 	vfprintf(stderr, format, arguments);
 	va_end(arguments);
+	/* the first minute line by line: see platform_log (xbox_kernel.c) */
+	if (wiiu_log_milliseconds() < 60000)
+	{
+		fflush(stderr);
+		fsync(fileno(stderr));
+	}
+}
+
+/* the console's SD card only records how long a file is when the file is
+flushed or closed, so a console that hangs (and is switched off) leaves an
+empty halou.log however much was written. This thread flushes the log every
+two seconds, and every sixteen says the program is still alive, with where
+the game's thread is: the frames shown, the bytes read from files, and the
+game thread's code address with the return addresses of its callers (look
+them up with powerpc-eabi-addr2line on this build's halou.elf, after taking
+off the difference between "main at" and main's address there). */
+int main(int argc, char **argv);
+volatile unsigned int wiiu_swap_count;
+extern volatile unsigned long long wiiu_bytes_read, wiiu_bytes_written;
+extern char wiiu_last_read[64], wiiu_last_written[64], wiiu_io_path[64];
+extern volatile unsigned long wiiu_io_started;
+extern volatile int wiiu_io_writing;
+int config_boolean(const char *name);
+static OSThread *volatile game_os_thread;
+
+extern OSThread *volatile wiiu_vertical_blank_os_thread;
+unsigned long wiiu_vertical_blank_count(void);
+unsigned long wiiu_pending_flips(void);
+
+/* a thread that is waiting (state 4) has its registers saved; they are read
+without stopping it (stopping it froze the console: run 34), and every word
+of its stack is checked as readable first. If it started running again
+meanwhile, the line says so. */
+static void log_where_a_thread_is(const char *name, OSThread *thread)
+{
+	uint32_t pc, lr, callers[8] = { 0 };
+	int count = 0, state = thread ? thread->state : 0, state_after;
+
+	if (!thread)
+	{
+		log_line("Halo U:   %s thread not started\n", name);
+		return;
+	}
+	if (state != OS_THREAD_STATE_WAITING)
+	{
+		log_line("Halo U:   %s thread state %d (not waiting), priority %d\n", name, state,
+			(int)OSGetThreadPriority(thread));
+		return;
+	}
+	pc = thread->context.srr0;
+	lr = thread->context.lr;
+	{
+		uint32_t low = (uint32_t)thread->stackEnd, high = (uint32_t)thread->stackStart;
+		uint32_t frame = thread->context.gpr[1];
+
+		if (low > high)
+		{
+			uint32_t swap = low;
+
+			low = high;
+			high = swap;
+		}
+		while (count < 8 && frame >= low && frame + 8 <= high && !(frame & 3) && OSIsAddressValid(frame))
+		{
+			uint32_t next = *(volatile uint32_t *)frame;
+
+			if (next <= frame || next + 8 > high || (next & 3) || !OSIsAddressValid(next + 4))
+				break;
+			callers[count++] = *(volatile uint32_t *)(next + 4);
+			frame = next;
+		}
+	}
+	state_after = thread->state;
+	log_line("Halo U:   %s thread state %d%s, priority %d, at %08x lr %08x; callers %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		name, state, state_after == state ? "" : " (moved on while read)", (int)OSGetThreadPriority(thread),
+		(unsigned)pc, (unsigned)lr,
+		(unsigned)callers[0], (unsigned)callers[1], (unsigned)callers[2], (unsigned)callers[3],
+		(unsigned)callers[4], (unsigned)callers[5], (unsigned)callers[6], (unsigned)callers[7]);
+}
+
+/* every thread in the program, from the system's list of active threads:
+which core each may run on, its priority and state, and for one that waits,
+where. A thread that is ready (state 1) but never runs is starved by one
+above it on its core. Read without stopping anything; the list is followed
+for at most 48 steps, every link checked first. */
+static unsigned int census_count;
+
+static void log_every_thread(void)
+{
+	OSThread *start = OSGetCurrentThread(), *thread = start;
+	int count = 0;
+
+	log_line("Halo U:   threads (id name: cores, priority, state, suspended, at):\n");
+	do
+	{
+		const char *name = thread->name && OSIsAddressValid((uint32_t)thread->name) ? thread->name : "-";
+
+		log_line("Halo U:     %u %.24s: cores %s%s%s, priority %d, state %d, suspended %d, at %08x lr %08x\n",
+			(unsigned)thread->id, name,
+			(thread->attr & OS_THREAD_ATTRIB_AFFINITY_CPU0) ? "0" : "",
+			(thread->attr & OS_THREAD_ATTRIB_AFFINITY_CPU1) ? "1" : "",
+			(thread->attr & OS_THREAD_ATTRIB_AFFINITY_CPU2) ? "2" : "",
+			(int)thread->priority, (int)thread->state, (int)thread->suspendCounter,
+			(unsigned)thread->context.srr0, (unsigned)thread->context.lr);
+		thread = thread->activeLink.next;
+		if (!thread || ((uint32_t)thread & 7) || !OSIsAddressValid((uint32_t)thread)
+			|| !OSIsAddressValid((uint32_t)thread + sizeof(OSThread) - 4))
+			break;
+	} while (thread != start && ++count < 48);
+}
+
+static void log_where_the_game_is(void)
+{
+	unsigned long io_started = wiiu_io_started;
+
+	/* what the files are doing first: if anything below goes wrong, this
+	much is in the log already */
+	log_line("Halo U: still running; %u frames, read %llu KB (last ...%.40s), wrote %llu KB (last ...%.40s)\n",
+		wiiu_swap_count, wiiu_bytes_read >> 10, wiiu_last_read, wiiu_bytes_written >> 10, wiiu_last_written);
+	if (io_started)
+		log_line("Halo U:   a %s of ...%.50s has waited %lu ms\n", wiiu_io_writing ? "write" : "read",
+			wiiu_io_path, wiiu_log_milliseconds() + 1 - io_started);
+	/* the screen's refresh timer: the game waits on it after every frame */
+	log_line("Halo U:   %lu vertical blanks, %lu frames waiting for one\n",
+		wiiu_vertical_blank_count(), wiiu_pending_flips());
+	{
+		extern volatile unsigned int wiiu_gpu_flips, wiiu_gpu_waits_given_up;
+		uint32_t swaps, flips;
+		OSTime last_flip, last_vsync;
+
+		/* the GPU: frames sent and shown, and how far it has got */
+		GX2GetSwapStatus(&swaps, &flips, &last_flip, &last_vsync);
+		log_line("Halo U:   GPU: %u frames sent, %u shown; submitted %llu, done %llu; %u waits given up\n",
+			swaps, flips, (unsigned long long)GX2GetLastSubmittedTimeStamp(),
+			(unsigned long long)GX2GetRetiredTimeStamp(), wiiu_gpu_waits_given_up);
+	}
+	log_where_a_thread_is("game", game_os_thread);
+	log_where_a_thread_is("vertical blank", wiiu_vertical_blank_os_thread);
+	if (++census_count <= 3 || census_count % 4 == 0)
+		log_every_thread();
+}
+
+static void *log_sync_thread(void *unused)
+{
+	unsigned int ticks = 0;
+
+	(void)unused;
+	OSSetThreadName(OSGetCurrentThread(), "log");
+	for (;;)
+	{
+		OSSleepTicks(OSMillisecondsToTicks(2000));
+		if (++ticks % 8 == 0)
+			log_where_the_game_is();
+		fsync(fileno(stderr));
+	}
+	return NULL;
 }
 
 /* ---------- when something goes wrong: a last line in the log
@@ -100,13 +269,27 @@ static BOOL crashed_dsi(OSContext *context) { return crashed("memory (DSI)", con
 static BOOL crashed_isi(OSContext *context) { return crashed("code (ISI)", context); }
 static BOOL crashed_program(OSContext *context) { return crashed("program", context); }
 
+/* the game's thread has returned */
+static volatile int game_finished;
+
 static void *game_thread(void *result)
 {
 	/* GX2, the graphics, belongs to the core it was started on: the game's
 	thread stays on the main core (CPU 1), where the system expects it */
+	int started_on = OSGetCoreId(), waits = 0;
+
 	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
 	OSYieldThread();
+	/* the affinity alone does not move a running thread: a short sleep makes
+	the scheduler place it again, by its new affinity. (Console test 2: a
+	thread made this way played sound but its graphics stayed dark.) */
+	while (OSGetCoreId() != 1 && waits++ < 100)
+		OSSleepTicks(OSMillisecondsToTicks(1));
+	log_line("Halo U: the game's thread started on core %d, runs on core %d\n", started_on, OSGetCoreId());
+	game_os_thread = OSGetCurrentThread();
+	OSSetThreadName(game_os_thread, "game");
 	*(int *)result = halo_xbox_main();
+	game_finished = 1;
 	return NULL;
 }
 
@@ -118,11 +301,29 @@ int main(int argc, char **argv)
 
 	(void)argc;
 	(void)argv;
+	__eabi();
 	start_time = OSGetSystemTime();
 	WHBProcInit();
 	WHBLogCafeInit();
 	WHBLogUdpInit();
 
+	/* the last runs' logs kept beside it, newest first (halou-1.log is the
+	run before this one), so a launch that goes wrong is still there to read
+	after the next */
+	{
+		char older[96], newer[96];
+		int index;
+
+		snprintf(older, sizeof(older), DATA_ROOT "/halou-%d.log", LOG_KEEP);
+		remove(older);
+		for (index = LOG_KEEP - 1; index >= 1; index--)
+		{
+			snprintf(newer, sizeof(newer), DATA_ROOT "/halou-%d.log", index);
+			snprintf(older, sizeof(older), DATA_ROOT "/halou-%d.log", index + 1);
+			rename(newer, older);
+		}
+		rename(LOG_PATH, DATA_ROOT "/halou-1.log");
+	}
 	/* the log on the SD card, each line written as it is said, so a crash
 	leaves it whole */
 	if (freopen(LOG_PATH, "w", stderr))
@@ -133,6 +334,7 @@ int main(int argc, char **argv)
 	always says what made it */
 	log_line("Halo U: build " HALOU_BUILD_ID "\n");
 	log_line("Halo U: starting, data in " DATA_ROOT "\n");
+	log_line("Halo U: main at %p\n", (void *)main);
 	WHBLogPrint("Halo U: build " HALOU_BUILD_ID ", data in " DATA_ROOT);
 
 	atexit(exit_said);
@@ -144,10 +346,42 @@ int main(int argc, char **argv)
 	if (chdir(DATA_ROOT) != 0)
 		log_line("Halo U: there is no " DATA_ROOT " folder on the SD card\n");
 
+	{
+		pthread_t sync_thread;
+
+		if (pthread_create(&sync_thread, NULL, log_sync_thread, NULL) == 0)
+			pthread_detach(sync_thread);
+	}
+
 	pthread_attr_init(&attributes);
 	pthread_attr_setstacksize(&attributes, GAME_STACK_SIZE);
 	if (pthread_create(&thread, &attributes, game_thread, &result) == 0)
-		pthread_join(thread, NULL);
+	{
+		/* this thread answers the system's messages (ProcUI) while the game
+		runs: on the console the GPU is the app's only once the app has
+		taken the foreground it is given, and until then nothing sent to
+		the GPU is done and the launch splash stays up (Cemu draws
+		regardless). Run r45: not one GPU step finished in a minute. It is
+		also what makes HOME work. */
+		int first = 1;
+
+		while (!game_finished)
+		{
+			if (!WHBProcIsRunning())
+			{
+				log_line("Halo U: the system has asked the app to close\n");
+				break;
+			}
+			if (first)
+			{
+				log_line("Halo U: answering the system's messages (ProcUI) while the game runs\n");
+				first = 0;
+			}
+			OSSleepTicks(OSMillisecondsToTicks(10));
+		}
+		if (game_finished)
+			pthread_join(thread, NULL);
+	}
 	else
 		log_line("Halo U: cannot start the game's thread\n");
 	pthread_attr_destroy(&attributes);

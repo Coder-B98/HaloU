@@ -31,6 +31,10 @@ Conventions carried over from the Xbox:
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef __WIIU__
+#include <coreinit/core.h>
+#include <coreinit/thread.h>
+#endif
 
 void d3d8_surface_initialize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
 void d3d8_surface_resize(D3DSurface *surface, D3DFORMAT format, unsigned long width, unsigned long height);
@@ -605,6 +609,12 @@ static struct
 	/* debug.gpu_skip_vertex_shaders "<id>,<id>..." drops draws by vertex
 	shader, for finding which pass produces something (port_config.c) */
 	const char *skip_vertex_shaders;
+	/* debug.gpu_skip_immediate: no immediate draws (menus, text), to see
+	the 3D world behind them */
+	BOOL skip_immediate;
+	/* debug.gpu_probe_raster_off: vertex buffer draws without culling,
+	depth test or scissor */
+	BOOL probe_raster_off;
 	const char *dump_shaders;
 	BOOL statistics;
 } debug_settings;
@@ -967,11 +977,23 @@ static volatile unsigned int flip_count;
 static unsigned long pending_flips;
 static BOOL vertical_blank_thread_started = FALSE;
 
+#ifdef __WIIU__
+/* read by the Wii U log's "still running" line (wiiu_main.c) */
+OSThread *volatile wiiu_vertical_blank_os_thread;
+unsigned long wiiu_vertical_blank_count(void) { return vertical_blank_count; }
+unsigned long wiiu_pending_flips(void) { return pending_flips; }
+#endif
+
 static void *vertical_blank_thread(void *unused)
 {
 	struct timespec next;
 
 	(void)unused;
+#ifdef __WIIU__
+	/* (made with OSCreateThread: vertical_blank_start) */
+	platform_log("vertical blank thread running on core %d at priority %d",
+		(int)OSGetCoreId(), (int)OSGetThreadPriority(OSGetCurrentThread()));
+#endif
 	clock_gettime(CLOCK_MONOTONIC, &next);
 	for (;;)
 	{
@@ -996,8 +1018,10 @@ static void *vertical_blank_thread(void *unused)
 				wait.tv_nsec += 1000000000L;
 				wait.tv_sec--;
 			}
+			/* (with somewhere for the time left: wut's nanosleep writes it
+			even when given NULL, which crashed run r08) */
 			if (wait.tv_sec >= 0)
-				nanosleep(&wait, NULL);
+				nanosleep(&wait, &wait);
 		}
 #else
 		clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &next, NULL);
@@ -1021,9 +1045,57 @@ static void *vertical_blank_thread(void *unused)
 	return NULL;
 }
 
+#ifdef __WIIU__
+/* On the console the thread pthread_create made for this never ran once
+(run r40: "not started", 0 vertical blanks), while the game waited for it.
+So the Wii U makes it itself, where its core and priority are plain to see
+and the log can find it from the start. Core 2 by default: the game is on
+core 1. Core 0 at priority 8 froze the whole console (r39). */
+static OSThread wiiu_vertical_blank_thread_data;
+static uint8_t wiiu_vertical_blank_stack[0x10000] __attribute__((aligned(16)));
+
+static int wiiu_vertical_blank_entry(int argc, const char **argv)
+{
+	(void)argc;
+	(void)argv;
+	vertical_blank_thread(NULL);
+	return 0;
+}
+
+static BOOL wiiu_start_vertical_blank_thread(void)
+{
+	static const uint32_t affinity[3] = { OS_THREAD_ATTRIB_AFFINITY_CPU0,
+		OS_THREAD_ATTRIB_AFFINITY_CPU1, OS_THREAD_ATTRIB_AFFINITY_CPU2 };
+	long core = config_integer("debug.wiiu_vblank_core");
+	long priority = config_integer("debug.wiiu_vblank_priority");
+	OSThread *thread = &wiiu_vertical_blank_thread_data;
+
+	if (core < 0 || core > 2)
+		core = 2;
+	if (priority <= 0 || priority > 31)
+		priority = 16;
+	if (!OSCreateThread(thread, (OSThreadEntryPointFn)wiiu_vertical_blank_entry, 0, NULL,
+		wiiu_vertical_blank_stack + sizeof(wiiu_vertical_blank_stack), sizeof(wiiu_vertical_blank_stack),
+		(int32_t)priority, affinity[core] | OS_THREAD_ATTRIB_DETACHED))
+	{
+		platform_log("cannot make the vertical blank thread");
+		return FALSE;
+	}
+	OSSetThreadName(thread, "vertical blank");
+	wiiu_vertical_blank_os_thread = thread;
+	OSResumeThread(thread);
+	platform_log("vertical blank thread made for core %ld at priority %ld", core, priority);
+	return TRUE;
+}
+#endif
+
 static void vertical_blank_start(void)
 {
 	pthread_mutex_lock(&vertical_blank_lock);
+#ifdef __WIIU__
+	if (!vertical_blank_thread_started)
+		vertical_blank_thread_started = wiiu_start_vertical_blank_thread();
+#else
 	if (!vertical_blank_thread_started)
 	{
 		pthread_t thread;
@@ -1038,6 +1110,7 @@ static void vertical_blank_start(void)
 			platform_log("cannot start the vertical blank thread");
 		}
 	}
+#endif
 	pthread_mutex_unlock(&vertical_blank_lock);
 }
 
@@ -1591,6 +1664,8 @@ static void gl_initialize(void)
 	}
 	memory_watch_initialize();
 	debug_settings.skip_vertex_shaders = config_string("debug.gpu_skip_vertex_shaders");
+	debug_settings.skip_immediate = config_boolean("debug.gpu_skip_immediate");
+	debug_settings.probe_raster_off = config_boolean("debug.gpu_probe_raster_off");
 	debug_settings.dump_shaders = *config_string("debug.gpu_dump_shaders") ?
 		config_string("debug.gpu_dump_shaders") : NULL;
 	debug_settings.statistics = config_boolean("debug.gpu_stats");
@@ -3399,6 +3474,12 @@ static struct program_entry *prepare_draw(BOOL immediate)
 		return NULL;
 	}
 	apply_raster_state(has_depth);
+	if (debug_settings.probe_raster_off && !immediate)
+	{
+		state_enable(&gl_state.cull_face, GL_CULL_FACE, FALSE);
+		state_enable(&gl_state.depth_test, GL_DEPTH_TEST, FALSE);
+		state_enable(&gl_state.scissor_test, GL_SCISSOR_TEST, FALSE);
+	}
 	for (stage = 0; stage < D3DTSS_MAXSTAGES; stage++)
 	{
 		key.alpha_kill[stage] = D3D__TextureState[stage][D3DTSS_ALPHAKILL] == D3DTALPHAKILL_ENABLE;
@@ -3414,6 +3495,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	if (target_samples > 1 && key.alpha_test_function && !D3D__RenderState[D3DRS_ALPHABLENDENABLE])
 		key.alpha_test_samples = (unsigned char)target_samples;
 #endif
+	key.debug_probe = *config_string("debug.gpu_debug_expression") && !immediate;
 	key.fog_enable = D3D__RenderState[D3DRS_FOGENABLE] != 0;
 	key.fog_table_mode = (unsigned char)D3D__RenderState[D3DRS_FOGTABLEMODE];
 #ifdef HALO_GLES
@@ -4457,7 +4539,7 @@ void WINAPI D3DDevice_End(void)
 	D3DPRIMITIVETYPE type = device.immediate_type;
 
 	device.immediate_active = FALSE;
-	if (!count || !prepare_draw(TRUE))
+	if (!count || debug_settings.skip_immediate || !prepare_draw(TRUE))
 		return;
 	trace_draw("immediate", type, count, device.immediate_vertices);
 	offset = stream_upload(device.immediate_vertices, count * stride);
@@ -4780,6 +4862,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		memset(&stats, 0, sizeof(stats));
 	}
 	platform_pump_events();
+
+	/* on the Wii U console the game reaches this wait before it ever asks
+	for a vertical blank callback, so the thread that empties the queue
+	must be started here or the wait never ends (it starts only once) */
+	vertical_blank_start();
 
 	pthread_mutex_lock(&vertical_blank_lock);
 	/* the Xbox keeps at most two frames queued behind its 60 Hz display;

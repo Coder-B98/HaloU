@@ -1564,7 +1564,8 @@ static boolean hs_parse_scenario_datum(
 			element + offset,
 			hs_compile_globals.compiled_source + expression->source_offset) == 0)
 		{
-			expression->data = element_index;
+			/* port: (a short's, at the start of the node's data: hs.h) */
+			expression->data = hs_value_from_short(element_index);
 			result = TRUE;
 			break;
 		}

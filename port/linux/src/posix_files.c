@@ -42,6 +42,21 @@ static void fill_information(const struct stat *st, struct posix_file_informatio
 int posix_stat(const char *path, struct posix_file_information *information)
 {
 	struct stat st;
+#ifdef __WIIU__
+	/* the console's SD card can't stat "maps/" with the slash on the end
+	(Cemu can, inferred from console run 3), and the game checks its map
+	folder as "d:\\maps\\", so drop trailing slashes first */
+	char trimmed[1024];
+	size_t length = strlen(path);
+
+	if (length > 1 && path[length - 1] == '/' && length < sizeof(trimmed))
+	{
+		memcpy(trimmed, path, length + 1);
+		while (length > 1 && trimmed[length - 1] == '/' && trimmed[length - 2] != ':')
+			trimmed[--length] = 0;
+		path = trimmed;
+	}
+#endif
 
 	if (stat(path, &st) != 0)
 		return -1;
@@ -91,7 +106,39 @@ int posix_seek(int descriptor, posix_long offset_low, posix_long offset_high, in
 
 int posix_truncate(int descriptor, posix_ulong size_low, posix_ulong size_high)
 {
-	return ftruncate(descriptor, (off_t)(((unsigned long long)size_high << 32) | size_low));
+	off_t size = (off_t)(((unsigned long long)size_high << 32) | size_low);
+#ifdef __WIIU__
+	/* the console's SD card can only shorten a file with ftruncate (Cemu
+	lengthens it too): a longer file is written out with zeros, keeping the
+	file position (the game's cache files are made at a map's size).
+	The card also keeps a file's length only once the file is flushed, and
+	the cache files stay open until the console is switched off, so the
+	new length is flushed at once: otherwise every launch finds the cache
+	files the wrong length and writes them all out again (3.5 minutes,
+	console run 8). Zeros go a megabyte at a time, as the card is slow
+	with small writes. */
+	struct stat information;
+
+	if (fstat(descriptor, &information) == 0 && size > information.st_size)
+	{
+		static char zeros[0x100000];
+		off_t position = lseek(descriptor, 0, SEEK_CUR), left;
+
+		if (position == (off_t)-1 || lseek(descriptor, 0, SEEK_END) == (off_t)-1)
+			return -1;
+		for (left = size - information.st_size; left > 0;)
+		{
+			ssize_t written = write(descriptor, zeros, left < (off_t)sizeof(zeros) ? (size_t)left : sizeof(zeros));
+
+			if (written <= 0)
+				return -1;
+			left -= written;
+		}
+		fsync(descriptor);
+		return lseek(descriptor, position, SEEK_SET) == (off_t)-1 ? -1 : 0;
+	}
+#endif
+	return ftruncate(descriptor, size);
 }
 
 int posix_disk_space(const char *path,

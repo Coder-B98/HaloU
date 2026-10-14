@@ -45,7 +45,6 @@ WIIU_FLAGS = ["--target=powerpc-unknown-eabi", "-mcpu=750", "-mhard-float", "-ml
 # SDL3, OpenGL, the network or the self-updater: the Wii U has its own, or
 # none yet)
 LINUX_PLATFORM_UNITS = [
-    "bink_null.c",
     "xbdm.c",
     "d3d8_resources.c",
     "halo_linker_common.c",
@@ -63,16 +62,21 @@ LINUX_PLATFORM_UNITS = [
     "nv2a_vsh.c",
     "xbox_textures.c",
     "xgpu_text.c",
+    # the sound: the Linux build's mixer, played through AX (port/wiiu/src/wiiu_audio.c)
+    "dsound_sdl.c",
 ]
 
 # the Wii U's units that are not the Xbox's platform layer, built without it
-WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c"]
+WIIU_STARTUP_UNITS = ["wiiu_main.c", "wiiu_gl.c", "wiiu_alloc.c", "wiiu_pads.c", "wiiu_audio.c",
+                      # (the Bink movies' decoding: FFmpeg's headers, tools/wiiu_ffmpeg.sh)
+                      "wiiu_bink_decode.c"]
 
 # the extra flags of some of those: the GL shim reads the Linux layer's gl.h
 # (its list of functions) and the Khronos headers that came with CafeGLSL
 STARTUP_EXTRA = {"wiiu_main.c": ["-Ibuild/wiiu"],
                  "wiiu_gl.c": ["-iquote", "port/linux/src", "-Iport/wiiu/include/khronos",
-                               f"-isystem{DEVKITPRO}/portlibs/wiiu/include"]}
+                               f"-isystem{DEVKITPRO}/portlibs/wiiu/include"],
+                 "wiiu_bink_decode.c": [f"-isystem{DEVKITPRO}/portlibs/wiiu/include"]}
 
 # the Linux build's flags with no meaning for gcc or the Wii U
 DROP = {
@@ -171,14 +175,22 @@ def main() -> int:
         n.rule("cc", f"$cc -MMD -MF $out.d $flags -c $in -o $out", depfile="$out.d", deps="gcc",
                description="WIIU CC $out")
         n.rule("link", f"DEVKITPRO={DEVKITPRO} $link {' '.join(MACHDEP)} -g -specs={WUT}/share/wut.specs -Wl,-Map,$out.map"
-               f" -o $out @$out.rsp -L{DEVKITPRO}/portlibs/wiiu/lib -L{WUT}/lib -lcafeglsl -lstdc++ -lwut -lm",
+               # (a line in the log for each allocation that fails: port/wiiu/src/wiiu_alloc.c)
+               " -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=memalign"
+               f" -o $out @$out.rsp -L{DEVKITPRO}/portlibs/wiiu/lib -L{WUT}/lib -lcafeglsl -lstdc++"
+               " -lavformat -lavcodec -lavutil -lwut -lm",
                rspfile="$out.rsp", rspfile_content="$in_newline", description="WIIU LINK $out")
         # (clang marks each object's stack not executable in a .note.GNU-stack
         # section, which elf2rpl has no place for; the Wii U's never is)
         n.rule("rpx", f"{DEVKITPRO}/devkitPPC/bin/powerpc-eabi-objcopy --remove-section .note.GNU-stack $in $out.elf"
                f" && {DEVKITPRO}/tools/bin/elf2rpl $out.elf $out", description="WIIU RPX $out")
+        # the icon and the launch images: the owner's own in port/wiiu/assets
+        # when there (kept out of the repository, like the game's data), else
+        # the ring drawn in port/wiiu/icons
+        IMAGES = "port/wiiu/assets" if Path("port/wiiu/assets/icon.png").exists() else "port/wiiu/icons"
         n.rule("wuhb", f"{DEVKITPRO}/tools/bin/wuhbtool $in $out --name=\"Halo U\" --short-name=\"Halo U\""
-               " --author=\"Halo U\"", description="WIIU WUHB $out")
+               f" --author=\"Halo U\" --icon={IMAGES}/icon.png --tv-image={IMAGES}/tv.png"
+               f" --drc-image={IMAGES}/drc.png", description="WIIU WUHB $out")
         objects = []
         for source, flags in units:
             obj = OBJ / Path(source).with_suffix(".o")
@@ -187,7 +199,8 @@ def main() -> int:
                     variables={"flags": " ".join(shlex.quote(flag) for flag in flags)})
         n.build(str(BUILD / "halou.elf"), "link", [str(o) for o in objects])
         n.build(str(BUILD / "halou.rpx"), "rpx", str(BUILD / "halou.elf"))
-        n.build(str(BUILD / "halou.wuhb"), "wuhb", str(BUILD / "halou.rpx"))
+        n.build(str(BUILD / "halou.wuhb"), "wuhb", str(BUILD / "halou.rpx"),
+                implicit=[f"{IMAGES}/{image}.png" for image in ("icon", "tv", "drc")])
         n.default(str(BUILD / "halou.wuhb"))
     print(f"wrote {BUILD / 'build.ninja'}: {len(units)} units, build {describe}")
     return 0

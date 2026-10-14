@@ -14,6 +14,7 @@ SD card (`sd:/halou/maps`).
 | clang | Ubuntu clang 18.1.3 | `apt install clang` |
 | ninja | 1.11.1 | `apt install ninja-build` |
 | Python | 3.13 (the version used; older 3.x untested) | |
+| FFmpeg (Bink movies only, LGPL 2.1+, linked in) | tag `n7.1`, commit `b08d7969c550a804a59511c7b83f2dd8cc0499b8`; sha256 `libavformat.a` `b55af4c32d232ff55e0535de765bf5da9a9d36c1fe1178cea2de13aad5b6b6d4`, `libavcodec.a` `c5b7ffc04d894e096a9021314d1b7756c44f213fa0ddf85b1ed5930b4b76464a`, `libavutil.a` `7d35b39dc4d6e4d59781544ec13a80441ba4a381359dc666c718082db9f34cda` | built from source by `tools/wiiu_ffmpeg.sh` (the Bink demuxer and decoders only, no GPL parts) |
 | CafeGLSL's build tools | bison, flex, python3-venv | `apt install bison flex python3-venv` |
 
 The game is compiled by clang (for its MSVC semantics) and linked by
@@ -31,6 +32,9 @@ sudo chown -R $(id -u) /opt/devkitpro/portlibs/wiiu
 
 # 2. CafeGLSL into /opt/devkitpro/portlibs/wiiu (once)
 tools/wiiu_cafeglsl.sh
+
+# 2b. FFmpeg's Bink decoder into the same place (once)
+tools/wiiu_ffmpeg.sh
 
 # 3. the game: build/wiiu/halou.wuhb and build/wiiu/BUILDINFO.txt
 tools/wiiu_build.sh

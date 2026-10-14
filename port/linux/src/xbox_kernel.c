@@ -6,6 +6,7 @@ threads, asynchronous procedure calls, time, memory and debug output.
 */
 
 #include "platform.h"
+#include "port_config.h"
 
 #include <errno.h>
 #include <sched.h>
@@ -19,6 +20,10 @@ threads, asynchronous procedure calls, time, memory and debug output.
 #endif
 #include <time.h>
 #include <unistd.h>
+#ifdef __WIIU__
+#include <coreinit/thread.h>
+#include <coreinit/time.h>
+#endif
 
 #define PLATFORM_HANDLE_SIGNATURE 0x686e646cUL /* 'hndl' */
 
@@ -44,6 +49,15 @@ void platform_log(const char *format, ...)
 	vfprintf(stderr, format, arguments);
 	va_end(arguments);
 	fputc('\n', stderr);
+#ifdef __WIIU__
+	/* a console that freezes keeps none of a log it never flushed (run
+	r39), so the first minute is flushed line by line */
+	if (milliseconds < 60000)
+	{
+		fflush(stderr);
+		fsync(fileno(stderr));
+	}
+#endif
 }
 
 void platform_unimplemented(const char *name)
@@ -626,9 +640,28 @@ BOOL WINAPI GetExitCodeThread(HANDLE object, LPDWORD exit_code)
 	return TRUE;
 }
 
+#ifdef __WIIU__
+/* On the Wii U, giving way (OSYieldThread) only lets a thread of the same
+priority run; one below it would starve while a loop keeps "yielding". A
+short real sleep lets every thread on the core have a turn. */
+static void give_way(void)
+{
+	static int sleep = -1;
+
+	if (sleep < 0)
+		sleep = config_boolean("debug.wiiu_give_way_sleep") ? 1 : 0;
+	if (sleep)
+		OSSleepTicks(OSMicrosecondsToTicks(500));
+	else
+		OSYieldThread();
+}
+#else
+#define give_way() sched_yield()
+#endif
+
 BOOL WINAPI SwitchToThread(void)
 {
-	sched_yield();
+	give_way();
 	return TRUE;
 }
 
@@ -640,7 +673,7 @@ DWORD WINAPI SleepEx(DWORD milliseconds, BOOL alertable)
 		return WAIT_IO_COMPLETION;
 	if (milliseconds == 0)
 	{
-		sched_yield();
+		give_way();
 		return 0;
 	}
 	if (milliseconds == INFINITE)

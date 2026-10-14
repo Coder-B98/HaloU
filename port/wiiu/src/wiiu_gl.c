@@ -1674,6 +1674,70 @@ static int draw_prepare(void)
 	return attributes_bind(program);
 }
 
+/* port (debugging, temporary): debug.wiiu_time_draws waits for the GPU
+after each of the game's draws in its first frames and logs, in full,
+the draws it took long over (the console's GPU once took over a second a
+frame, while the same frames without the game's draws came at once) */
+static int time_draws = -1;
+static unsigned int draws_this_frame, slow_draws_logged;
+
+static void draw_timed(GLenum mode, GLsizei count, int indexed, GLenum type, const unsigned char *indices,
+	GLint base_vertex)
+{
+	OSTime start, timestamp, took;
+	int finished = 1;
+	struct gl_program *program;
+	struct draw_targets targets;
+
+	if (time_draws < 0)
+	{
+		time_draws = config_boolean("debug.wiiu_time_draws");
+		if (time_draws)
+			platform_log("GX2: timing each of the game's draws (debug.wiiu_time_draws)");
+	}
+	draws_this_frame++;
+	if (!time_draws || presented_frames >= 30 || slow_draws_logged >= 16)
+		return;
+	start = OSGetSystemTime();
+	GX2Flush();
+	timestamp = GX2GetLastSubmittedTimeStamp();
+	while (GX2GetRetiredTimeStamp() < timestamp)
+	{
+		if (OSGetSystemTime() - start > OSSecondsToTicks(3))
+		{
+			finished = 0;
+			break;
+		}
+		OSSleepTicks(OSMicrosecondsToTicks(100));
+	}
+	took = OSGetSystemTime() - start;
+	if (finished && took < OSMillisecondsToTicks(20))
+		return;
+	slow_draws_logged++;
+	platform_log("GX2 slow draw: frame %lu draw %u took %llu ms%s: %s mode %04x count %d base vertex %d",
+		presented_frames, draws_this_frame, (unsigned long long)OSTicksToMilliseconds(took),
+		finished ? "" : " (still not done after 3 s)", indexed ? "indexed" : "arrays", mode, count, base_vertex);
+	if (indexed && indices)
+	{
+		unsigned long lowest = 0xffffffff, highest = 0, value;
+		GLsizei index;
+
+		for (index = 0; index < count; index++)
+		{
+			value = type == GL_UNSIGNED_INT ? ((const uint32_t *)indices)[index] : ((const uint16_t *)indices)[index];
+			if (value < lowest)
+				lowest = value;
+			if (value > highest)
+				highest = value;
+		}
+		platform_log("GX2 slow draw:   indices %s from %lu to %lu", type == GL_UNSIGNED_INT ? "32-bit" : "16-bit",
+			lowest, highest);
+	}
+	program = name_get(&programs, gl.program);
+	if (program && targets_get(gl.draw_framebuffer, &targets))
+		trace_state(program, &targets);
+}
+
 /* ---------- rectangles: clears, blits and mipmaps */
 
 /* after an internal draw the GL state must all be set again */
@@ -2903,6 +2967,7 @@ static void GL_APIENTRY wiiu_glDrawArrays(GLenum mode, GLint first, GLsizei coun
 	if (draw_nothing)
 		return;
 	GX2DrawEx(primitive_mode(mode), (uint32_t)count, (uint32_t)first, 1);
+	draw_timed(mode, count, 0, 0, NULL, first);
 }
 
 static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint base_vertex)
@@ -2919,6 +2984,7 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
 	base vertex wraps around, as a negative one must) */
 	GX2DrawIndexedEx(primitive_mode(mode), (uint32_t)count,
 		type == GL_UNSIGNED_INT ? GX2_INDEX_TYPE_U32 : GX2_INDEX_TYPE_U16, pointer, (uint32_t)base_vertex, 1);
+	draw_timed(mode, count, 1, type, pointer, base_vertex);
 }
 
 static void GL_APIENTRY wiiu_glDrawElements(GLenum mode, GLsizei count, GLenum type, const void *indices)
@@ -3674,6 +3740,9 @@ void platform_video_swap(void)
 	current_depth = NULL;
 	internal_done();
 	GX2Invalidate(GX2_INVALIDATE_MODE_ATTRIBUTE_BUFFER, (void *)0, 0xffffffff);
+	if (time_draws > 0 && presented_frames < 30)
+		platform_log("GX2: frame %lu had %u draws", presented_frames, draws_this_frame);
+	draws_this_frame = 0;
 	presented_frames++;
 	gpu_free_collect();
 }

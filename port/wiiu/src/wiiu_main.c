@@ -13,6 +13,7 @@ builds' main thread has (a Wii U program's own is small).
 (No platform.h here: wut's headers and the XDK's both declare BOOL.)
 */
 
+#include <coreinit/core.h>
 #include <coreinit/debug.h>
 #include <coreinit/exception.h>
 #include <coreinit/memorymap.h>
@@ -275,8 +276,16 @@ static void *game_thread(void *result)
 {
 	/* GX2, the graphics, belongs to the core it was started on: the game's
 	thread stays on the main core (CPU 1), where the system expects it */
+	int started_on = OSGetCoreId(), waits = 0;
+
 	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
 	OSYieldThread();
+	/* the affinity alone does not move a running thread: a short sleep makes
+	the scheduler place it again, by its new affinity. (Console test 2: a
+	thread made this way played sound but its graphics stayed dark.) */
+	while (OSGetCoreId() != 1 && waits++ < 100)
+		OSSleepTicks(OSMillisecondsToTicks(1));
+	log_line("Halo U: the game's thread started on core %d, runs on core %d\n", started_on, OSGetCoreId());
 	game_os_thread = OSGetCurrentThread();
 	OSSetThreadName(game_os_thread, "game");
 	*(int *)result = halo_xbox_main();

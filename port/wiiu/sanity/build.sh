@@ -9,9 +9,10 @@ CC=$DEVKITPRO/devkitPPC/bin/powerpc-eabi-gcc
 OUT=build/wiiu
 mkdir -p $OUT/obj
 MACHDEP="-DESPRESSO -mcpu=750 -meabi -mhard-float"
-for variant in "" _thread; do
+for variant in "" _thread _core1; do
 	flags=""
 	[ "$variant" = _thread ] && flags="-DSANITY_ON_THREAD"
+	[ "$variant" = _core1 ] && flags="-DSANITY_ON_THREAD -DSANITY_WAIT_FOR_CORE1"
 	$CC $MACHDEP -O2 -g -Wall -D__WIIU__ -D__WUT__ -I$WUT/include $flags \
 		-DHALOU_BUILD_ID="\"$(git describe --always --dirty --abbrev=12)\"" \
 		-c port/wiiu/sanity/sanity.c -o $OUT/obj/sanity$variant.o
@@ -20,6 +21,7 @@ for variant in "" _thread; do
 	$DEVKITPRO/tools/bin/elf2rpl $OUT/halou_sanity$variant.elf $OUT/halou_sanity$variant.rpx
 	name="Halo U console test"
 	[ "$variant" = _thread ] && name="Halo U console test 2"
+	[ "$variant" = _core1 ] && name="Halo U console test 3"
 	$DEVKITPRO/tools/bin/wuhbtool $OUT/halou_sanity$variant.rpx $OUT/halou_sanity$variant.wuhb \
 		--name="$name" --short-name="$name" --author="Halo U"
 	md5sum $OUT/halou_sanity$variant.wuhb

@@ -14,6 +14,10 @@ sent and shown, the GPU's submitted and done timestamps, and where the
 sound hardware is playing in its buffer (it moves if the sound runs).
 HOME, then Close, ends it.
 
+Test 3 (-DSANITY_ON_THREAD -DSANITY_WAIT_FOR_CORE1, halou_sanity_core1.wuhb)
+is test 2 that first waits until its thread really is on CPU 1, where
+the system expects the graphics (test 2 stayed dark but played its tone).
+
 Built with -DSANITY_ON_THREAD (halou_sanity_thread.wuhb), the graphics
 and the tone start and run on a second thread made as the game makes its
 own (8 MB of stack, kept on CPU 1), while the main thread only answers
@@ -22,6 +26,7 @@ where the plain one works, the thread is the fault.
 */
 
 #include <coreinit/cache.h>
+#include <coreinit/core.h>
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <gx2/event.h>
@@ -43,7 +48,15 @@ where the plain one works, the thread is the fault.
 #define HALOU_BUILD_ID "unknown"
 #endif
 
-#define LOG_PATH "fs:/vol/external01/halou/sanity.txt"
+/* (a file of its own for each test; written new each run, as wut's
+fopen cannot append) */
+#if defined(SANITY_WAIT_FOR_CORE1)
+#define LOG_PATH "fs:/vol/external01/halou/sanity3.txt"
+#elif defined(SANITY_ON_THREAD)
+#define LOG_PATH "fs:/vol/external01/halou/sanity2.txt"
+#else
+#define LOG_PATH "fs:/vol/external01/halou/sanity1.txt"
+#endif
 #define TONE_FRAMES 4800
 
 static FILE *log_file;
@@ -114,8 +127,21 @@ static void *test_body(void *unused);
 /* as the game's thread: kept on CPU 1 (wiiu_main.c) */
 static void *test_thread(void *unused)
 {
+#ifdef SANITY_WAIT_FOR_CORE1
+	int waits = 0;
+#endif
+
+	log_line("test thread started on core %d", OSGetCoreId());
 	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
 	OSYieldThread();
+	log_line("after the affinity change and a yield: core %d", OSGetCoreId());
+#ifdef SANITY_WAIT_FOR_CORE1
+	/* (a short sleep makes the scheduler place the thread again, by its
+	new affinity) */
+	while (OSGetCoreId() != 1 && waits++ < 100)
+		OSSleepTicks(OSMillisecondsToTicks(1));
+	log_line("after waiting for core 1: core %d", OSGetCoreId());
+#endif
 	return test_body(unused);
 }
 #endif
@@ -181,7 +207,7 @@ int main(int argc, char **argv)
 	(void)argv;
 	start_time = OSGetSystemTime();
 	WHBProcInit();
-	log_file = fopen(LOG_PATH, "a");
+	log_file = fopen(LOG_PATH, "w");
 #ifdef SANITY_ON_THREAD
 	log_line("sanity test on a second thread, build %s: starting", HALOU_BUILD_ID);
 	{

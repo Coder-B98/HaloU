@@ -1681,23 +1681,22 @@ frame, while the same frames without the game's draws came at once) */
 static int time_draws = -1;
 static unsigned int draws_this_frame, slow_draws_logged;
 
-static void draw_timed(GLenum mode, GLsizei count, int indexed, GLenum type, const unsigned char *indices,
-	GLint base_vertex)
+/* with debug.wiiu_time_draws, in the first frames: waits for the GPU to
+finish what has been sent so far; TRUE when that took 20 ms or more (or
+had not finished after 3 s), and then logs it as a step named what */
+static int gpu_step_timed(const char *what)
 {
 	OSTime start, timestamp, took;
 	int finished = 1;
-	struct gl_program *program;
-	struct draw_targets targets;
 
 	if (time_draws < 0)
 	{
 		time_draws = config_boolean("debug.wiiu_time_draws");
 		if (time_draws)
-			platform_log("GX2: timing each of the game's draws (debug.wiiu_time_draws)");
+			platform_log("GX2: timing each step sent to the GPU (debug.wiiu_time_draws)");
 	}
-	draws_this_frame++;
-	if (!time_draws || presented_frames >= 30 || slow_draws_logged >= 16)
-		return;
+	if (!time_draws || !video_ready || presented_frames >= 30 || slow_draws_logged >= 24)
+		return 0;
 	start = OSGetSystemTime();
 	GX2Flush();
 	timestamp = GX2GetLastSubmittedTimeStamp();
@@ -1712,11 +1711,23 @@ static void draw_timed(GLenum mode, GLsizei count, int indexed, GLenum type, con
 	}
 	took = OSGetSystemTime() - start;
 	if (finished && took < OSMillisecondsToTicks(20))
-		return;
+		return 0;
 	slow_draws_logged++;
-	platform_log("GX2 slow draw: frame %lu draw %u took %llu ms%s: %s mode %04x count %d base vertex %d",
-		presented_frames, draws_this_frame, (unsigned long long)OSTicksToMilliseconds(took),
-		finished ? "" : " (still not done after 3 s)", indexed ? "indexed" : "arrays", mode, count, base_vertex);
+	platform_log("GX2 slow step: frame %lu, after draw %u: %s took %llu ms%s", presented_frames, draws_this_frame,
+		what, (unsigned long long)OSTicksToMilliseconds(took), finished ? "" : " (still not done after 3 s)");
+	return 1;
+}
+
+static void draw_timed(GLenum mode, GLsizei count, int indexed, GLenum type, const unsigned char *indices,
+	GLint first)
+{
+	struct gl_program *program;
+	struct draw_targets targets;
+
+	draws_this_frame++;
+	if (!gpu_step_timed(indexed ? "an indexed draw" : "a draw"))
+		return;
+	platform_log("GX2 slow step:   mode %04x count %d %s %d", mode, count, indexed ? "base vertex" : "first", first);
 	if (indexed && indices)
 	{
 		unsigned long lowest = 0xffffffff, highest = 0, value;
@@ -1730,7 +1741,7 @@ static void draw_timed(GLenum mode, GLsizei count, int indexed, GLenum type, con
 			if (value > highest)
 				highest = value;
 		}
-		platform_log("GX2 slow draw:   indices %s from %lu to %lu", type == GL_UNSIGNED_INT ? "32-bit" : "16-bit",
+		platform_log("GX2 slow step:   indices %s from %lu to %lu", type == GL_UNSIGNED_INT ? "32-bit" : "16-bit",
 			lowest, highest);
 	}
 	program = name_get(&programs, gl.program);
@@ -1757,6 +1768,16 @@ static void internal_targets_state(const struct draw_targets *targets, const uin
 		GX2_POLYGON_MODE_TRIANGLE, FALSE, FALSE, FALSE);
 }
 
+/* after GX2CopySurface, which on the console draws with state of its own
+(Cemu does the copy without touching it): ours again, all of it */
+static void gpu_state_restore(void)
+{
+	GX2SetContextState(context_state);
+	current_color = NULL;
+	current_depth = NULL;
+	internal_done();
+}
+
 /* a rectangle (clip space corners) from the internal program */
 static void internal_rectangle(struct internal_program *program, const float rectangle[4], const float *source,
 	float depth, const float *color)
@@ -1779,6 +1800,7 @@ static void internal_rectangle(struct internal_program *program, const float rec
 	if (program->color >= 0 && color)
 		GX2SetPixelUniformReg((uint32_t)program->color, 4, color);
 	GX2DrawEx(GX2_PRIMITIVE_MODE_TRIANGLE_STRIP, 4, 0, 1);
+	gpu_step_timed(color ? "a clear" : "a copy (blit or clear)");
 }
 
 static void clear_targets(const struct draw_targets *targets, GLbitfield mask)
@@ -2266,6 +2288,8 @@ static void texture_write(struct gl_texture *texture, unsigned int level, unsign
 				(const unsigned char *)pixels + row * width * 4, width * 4);
 		GX2Invalidate(GX2_INVALIDATE_MODE_CPU_TEXTURE, staging.image, staging.imageSize);
 		GX2CopySurfaceEx(&staging, 0, 0, surface, level, slice, 1, &rectangle, &point);
+		gpu_step_timed("a texture copy into a render texture (GX2CopySurfaceEx)");
+		gpu_state_restore();
 		gpu_free(staging.image);
 		texture->gpu_written = 1;
 		return;
@@ -2549,7 +2573,7 @@ static void GL_APIENTRY wiiu_glCopyImageSubData(GLuint source_name, GLenum sourc
 	GX2CopySurfaceEx(&source->texture.surface, (uint32_t)source_level, (uint32_t)source_z,
 		&destination->texture.surface, (uint32_t)destination_level, (uint32_t)destination_z, 1, &rectangle, &point);
 	destination->gpu_written = 1;
-	internal_done();
+	gpu_state_restore();
 }
 
 /* ---------- GL: samplers */
@@ -3699,6 +3723,7 @@ void platform_video_swap(void)
 		return;
 	GX2CopyColorBufferToScanBuffer(&screen, GX2_SCAN_TARGET_TV);
 	GX2CopyColorBufferToScanBuffer(&screen, GX2_SCAN_TARGET_DRC);
+	gpu_step_timed("the frame's copies to the TV and GamePad");
 	GX2SwapScanBuffers();
 	GX2Flush();
 	{

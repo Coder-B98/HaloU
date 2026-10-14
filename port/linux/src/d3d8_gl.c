@@ -4863,6 +4863,11 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	platform_pump_events();
 
+	/* on the Wii U console the game reaches this wait before it ever asks
+	for a vertical blank callback, so the thread that empties the queue
+	must be started here or the wait never ends (it starts only once) */
+	vertical_blank_start();
+
 	pthread_mutex_lock(&vertical_blank_lock);
 	/* the Xbox keeps at most two frames queued behind its 60 Hz display;
 	with interpolation, frames come at the real display's rate instead,

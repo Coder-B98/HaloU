@@ -990,26 +990,9 @@ static void *vertical_blank_thread(void *unused)
 
 	(void)unused;
 #ifdef __WIIU__
-	/* The Wii U never shares a core between threads by turns: the highest
-	priority thread that is ready runs until it waits. On the console (not
-	in Cemu) this thread never ran, so the game waited for it forever with
-	3 frames shown (run r38). Giving it core 0 and priority 8 at once froze
-	the whole console (r39), so each is a setting of its own to try. */
-	{
-		long priority = config_integer("debug.wiiu_vblank_priority");
-		long core = config_integer("debug.wiiu_vblank_core");
-		static const uint32_t affinity[3] = { OS_THREAD_ATTRIB_AFFINITY_CPU0,
-			OS_THREAD_ATTRIB_AFFINITY_CPU1, OS_THREAD_ATTRIB_AFFINITY_CPU2 };
-
-		if (core >= 0 && core <= 2)
-			OSSetThreadAffinity(OSGetCurrentThread(), affinity[core]);
-		if (priority > 0 && priority <= 31)
-			OSSetThreadPriority(OSGetCurrentThread(), (int32_t)priority);
-		OSYieldThread();
-		wiiu_vertical_blank_os_thread = OSGetCurrentThread();
-		platform_log("vertical blank thread running on core %d at priority %d (asked core %ld, priority %ld)",
-			(int)OSGetCoreId(), (int)OSGetThreadPriority(OSGetCurrentThread()), core, priority);
-	}
+	/* (made with OSCreateThread: vertical_blank_start) */
+	platform_log("vertical blank thread running on core %d at priority %d",
+		(int)OSGetCoreId(), (int)OSGetThreadPriority(OSGetCurrentThread()));
 #endif
 	clock_gettime(CLOCK_MONOTONIC, &next);
 	for (;;)
@@ -1062,9 +1045,57 @@ static void *vertical_blank_thread(void *unused)
 	return NULL;
 }
 
+#ifdef __WIIU__
+/* On the console the thread pthread_create made for this never ran once
+(run r40: "not started", 0 vertical blanks), while the game waited for it.
+So the Wii U makes it itself, where its core and priority are plain to see
+and the log can find it from the start. Core 2 by default: the game is on
+core 1. Core 0 at priority 8 froze the whole console (r39). */
+static OSThread wiiu_vertical_blank_thread_data;
+static uint8_t wiiu_vertical_blank_stack[0x10000] __attribute__((aligned(16)));
+
+static int wiiu_vertical_blank_entry(int argc, const char **argv)
+{
+	(void)argc;
+	(void)argv;
+	vertical_blank_thread(NULL);
+	return 0;
+}
+
+static BOOL wiiu_start_vertical_blank_thread(void)
+{
+	static const uint32_t affinity[3] = { OS_THREAD_ATTRIB_AFFINITY_CPU0,
+		OS_THREAD_ATTRIB_AFFINITY_CPU1, OS_THREAD_ATTRIB_AFFINITY_CPU2 };
+	long core = config_integer("debug.wiiu_vblank_core");
+	long priority = config_integer("debug.wiiu_vblank_priority");
+	OSThread *thread = &wiiu_vertical_blank_thread_data;
+
+	if (core < 0 || core > 2)
+		core = 2;
+	if (priority <= 0 || priority > 31)
+		priority = 16;
+	if (!OSCreateThread(thread, (OSThreadEntryPointFn)wiiu_vertical_blank_entry, 0, NULL,
+		wiiu_vertical_blank_stack + sizeof(wiiu_vertical_blank_stack), sizeof(wiiu_vertical_blank_stack),
+		(int32_t)priority, affinity[core] | OS_THREAD_ATTRIB_DETACHED))
+	{
+		platform_log("cannot make the vertical blank thread");
+		return FALSE;
+	}
+	OSSetThreadName(thread, "vertical blank");
+	wiiu_vertical_blank_os_thread = thread;
+	OSResumeThread(thread);
+	platform_log("vertical blank thread made for core %ld at priority %ld", core, priority);
+	return TRUE;
+}
+#endif
+
 static void vertical_blank_start(void)
 {
 	pthread_mutex_lock(&vertical_blank_lock);
+#ifdef __WIIU__
+	if (!vertical_blank_thread_started)
+		vertical_blank_thread_started = wiiu_start_vertical_blank_thread();
+#else
 	if (!vertical_blank_thread_started)
 	{
 		pthread_t thread;
@@ -1079,6 +1110,7 @@ static void vertical_blank_start(void)
 			platform_log("cannot start the vertical blank thread");
 		}
 	}
+#endif
 	pthread_mutex_unlock(&vertical_blank_lock);
 }
 

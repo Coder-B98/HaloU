@@ -156,6 +156,37 @@ static void log_where_a_thread_is(const char *name, OSThread *thread)
 		(unsigned)callers[4], (unsigned)callers[5], (unsigned)callers[6], (unsigned)callers[7]);
 }
 
+/* every thread in the program, from the system's list of active threads:
+which core each may run on, its priority and state, and for one that waits,
+where. A thread that is ready (state 1) but never runs is starved by one
+above it on its core. Read without stopping anything; the list is followed
+for at most 48 steps, every link checked first. */
+static unsigned int census_count;
+
+static void log_every_thread(void)
+{
+	OSThread *start = OSGetCurrentThread(), *thread = start;
+	int count = 0;
+
+	log_line("Halo U:   threads (id name: cores, priority, state, suspended, at):\n");
+	do
+	{
+		const char *name = thread->name && OSIsAddressValid((uint32_t)thread->name) ? thread->name : "-";
+
+		log_line("Halo U:     %u %.24s: cores %s%s%s, priority %d, state %d, suspended %d, at %08x lr %08x\n",
+			(unsigned)thread->id, name,
+			(thread->attr & OS_THREAD_ATTRIB_AFFINITY_CPU0) ? "0" : "",
+			(thread->attr & OS_THREAD_ATTRIB_AFFINITY_CPU1) ? "1" : "",
+			(thread->attr & OS_THREAD_ATTRIB_AFFINITY_CPU2) ? "2" : "",
+			(int)thread->priority, (int)thread->state, (int)thread->suspendCounter,
+			(unsigned)thread->context.srr0, (unsigned)thread->context.lr);
+		thread = thread->activeLink.next;
+		if (!thread || ((uint32_t)thread & 7) || !OSIsAddressValid((uint32_t)thread)
+			|| !OSIsAddressValid((uint32_t)thread + sizeof(OSThread) - 4))
+			break;
+	} while (thread != start && ++count < 48);
+}
+
 static void log_where_the_game_is(void)
 {
 	unsigned long io_started = wiiu_io_started;
@@ -172,6 +203,8 @@ static void log_where_the_game_is(void)
 		wiiu_vertical_blank_count(), wiiu_pending_flips());
 	log_where_a_thread_is("game", game_os_thread);
 	log_where_a_thread_is("vertical blank", wiiu_vertical_blank_os_thread);
+	if (++census_count <= 3 || census_count % 4 == 0)
+		log_every_thread();
 }
 
 static void *log_sync_thread(void *unused)
@@ -179,6 +212,7 @@ static void *log_sync_thread(void *unused)
 	unsigned int ticks = 0;
 
 	(void)unused;
+	OSSetThreadName(OSGetCurrentThread(), "log");
 	for (;;)
 	{
 		OSSleepTicks(OSMillisecondsToTicks(2000));
@@ -228,6 +262,7 @@ static void *game_thread(void *result)
 	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
 	OSYieldThread();
 	game_os_thread = OSGetCurrentThread();
+	OSSetThreadName(game_os_thread, "game");
 	*(int *)result = halo_xbox_main();
 	return NULL;
 }

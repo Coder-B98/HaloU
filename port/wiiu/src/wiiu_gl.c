@@ -76,6 +76,12 @@ void platform_log(const char *format, ...) __attribute__((format(printf, 1, 2)))
 long config_integer(const char *name);
 int config_boolean(const char *name);
 
+/* debug.wiiu_draw_nothing: the game's draws are skipped */
+static int draw_nothing;
+/* what the GPU has done: the heartbeat logs it (wiiu_main.c) */
+volatile unsigned int wiiu_gpu_flips, wiiu_gpu_waits_given_up;
+volatile unsigned long long wiiu_gpu_submitted, wiiu_gpu_retired;
+
 /* the screen: what the renderer is told it draws into (the game's picture
 is letterboxed into it at presentation) */
 #define SCREEN_WIDTH 1280
@@ -2894,6 +2900,8 @@ static void GL_APIENTRY wiiu_glDrawArrays(GLenum mode, GLint first, GLsizei coun
 		return;
 	if (tracing())
 		platform_log("GX2 draw: arrays mode %04x count %d first %d", mode, count, first);
+	if (draw_nothing)
+		return;
 	GX2DrawEx(primitive_mode(mode), (uint32_t)count, (uint32_t)first, 1);
 }
 
@@ -2903,6 +2911,8 @@ static void draw_elements(GLenum mode, GLsizei count, GLenum type, const void *i
 	const unsigned char *pointer;
 
 	if (count <= 0 || !buffer || !buffer->data || (unsigned long)indices >= buffer->size || !draw_prepare())
+		return;
+	if (draw_nothing)
 		return;
 	pointer = buffer->data + (unsigned long)indices;
 	/* (the indices are the CPU's 16-bit numbers, in its byte order; the
@@ -3465,6 +3475,26 @@ void host_gl_buffer_write(unsigned int target, unsigned int offset, unsigned int
 	buffer_write(bound_buffer(target), offset, size, data);
 }
 
+/* waits for the GPU to finish everything up to a timestamp, but at most
+two seconds: on the console a stopped GPU would otherwise stop the game
+with it, and the log would say nothing */
+static void wait_for_gpu(OSTime timestamp)
+{
+	OSTime start = OSGetSystemTime();
+
+	while (GX2GetRetiredTimeStamp() < timestamp)
+	{
+		if (OSGetSystemTime() - start > OSSecondsToTicks(2))
+		{
+			if (wiiu_gpu_waits_given_up++ < 8)
+				platform_log("GX2: the GPU has not finished a frame in 2 s (submitted %llu, done %llu)",
+					(unsigned long long)GX2GetLastSubmittedTimeStamp(), (unsigned long long)GX2GetRetiredTimeStamp());
+			return;
+		}
+		OSSleepTicks(OSMicrosecondsToTicks(500));
+	}
+}
+
 /* the frame just sent to the GPU used the stream buffers of this slot */
 void host_gl_fence_frame(unsigned int slot)
 {
@@ -3478,7 +3508,7 @@ void host_gl_wait_frame(unsigned int slot)
 {
 	slot %= FENCE_SLOTS;
 	if (video_ready && frame_fences[slot])
-		GX2WaitTimeStamp(frame_fences[slot]);
+		wait_for_gpu(frame_fences[slot]);
 	/* (the attribute values' ring follows the same frames) */
 	constant_ring_part = slot;
 	constant_ring_offset = 0;
@@ -3532,6 +3562,9 @@ int platform_video_initialize(unsigned long width, unsigned long height)
 	GX2InitColorBufferRegs(&screen);
 	screen.surface.image = gpu_alloc(screen.surface.alignment, screen.surface.imageSize);
 	constant_ring = gpu_alloc(0x100, CONSTANT_RING_PART * FENCE_SLOTS);
+	draw_nothing = config_boolean("debug.wiiu_draw_nothing");
+	if (draw_nothing)
+		platform_log("GX2: the game's draws are skipped (debug.wiiu_draw_nothing)");
 	uniform_blocks = config_boolean("debug.gpu_uniform_blocks");
 	/* (debug.gpu_uniform_blocks_unswapped: the copies in the CPU's order) */
 	if (uniform_blocks && config_boolean("debug.gpu_uniform_blocks_unswapped"))
@@ -3616,7 +3649,24 @@ void platform_video_swap(void)
 	/* no more than two frames waiting to be shown */
 	GX2GetSwapStatus(&swaps, &flips, &last_flip, &last_vsync);
 	if (swaps - flips > 2)
-		GX2WaitForFlip();
+	{
+		/* (at most two seconds of vertical blanks: on the console the
+		frames once never reached the screen and this wait never ended) */
+		int vsyncs = 0;
+
+		while (swaps - flips > 2 && vsyncs++ < 120)
+		{
+			GX2WaitForVsync();
+			GX2GetSwapStatus(&swaps, &flips, &last_flip, &last_vsync);
+		}
+		if (swaps - flips > 2 && wiiu_gpu_waits_given_up++ < 8)
+			platform_log("GX2: no frame reached the screen in 2 s (%u sent, %u shown; GPU submitted %llu, done %llu)",
+				swaps, flips, (unsigned long long)GX2GetLastSubmittedTimeStamp(),
+				(unsigned long long)GX2GetRetiredTimeStamp());
+	}
+	wiiu_gpu_flips = flips;
+	wiiu_gpu_submitted = GX2GetLastSubmittedTimeStamp();
+	wiiu_gpu_retired = GX2GetRetiredTimeStamp();
 	/* the copies set state of their own: ours again, all of it, and the
 	GPU's vertex caches cleared of last frame's vertices */
 	GX2SetContextState(context_state);

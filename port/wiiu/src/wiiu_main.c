@@ -18,6 +18,8 @@ builds' main thread has (a Wii U program's own is small).
 #include <coreinit/memorymap.h>
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
+#include <gx2/event.h>
+#include <gx2/swap.h>
 #include <whb/log.h>
 #include <whb/log_cafe.h>
 #include <whb/log_udp.h>
@@ -201,6 +203,17 @@ static void log_where_the_game_is(void)
 	/* the screen's refresh timer: the game waits on it after every frame */
 	log_line("Halo U:   %lu vertical blanks, %lu frames waiting for one\n",
 		wiiu_vertical_blank_count(), wiiu_pending_flips());
+	{
+		extern volatile unsigned int wiiu_gpu_flips, wiiu_gpu_waits_given_up;
+		uint32_t swaps, flips;
+		OSTime last_flip, last_vsync;
+
+		/* the GPU: frames sent and shown, and how far it has got */
+		GX2GetSwapStatus(&swaps, &flips, &last_flip, &last_vsync);
+		log_line("Halo U:   GPU: %u frames sent, %u shown; submitted %llu, done %llu; %u waits given up\n",
+			swaps, flips, (unsigned long long)GX2GetLastSubmittedTimeStamp(),
+			(unsigned long long)GX2GetRetiredTimeStamp(), wiiu_gpu_waits_given_up);
+	}
 	log_where_a_thread_is("game", game_os_thread);
 	log_where_a_thread_is("vertical blank", wiiu_vertical_blank_os_thread);
 	if (++census_count <= 3 || census_count % 4 == 0)

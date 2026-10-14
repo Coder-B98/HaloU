@@ -446,6 +446,8 @@ static const struct config_setting config_settings[] =
 		"Wii U: the screen refresh timer thread's priority (1 to 31, lower runs first); 0 means 16, the same as the game." },
 	{ "debug.wiiu_vblank_core", _config_integer, "-1", "HALO_WIIU_VBLANK_CORE", _environment_value, _platform_all,
 		"Wii U: the CPU core (0, 1 or 2) the screen refresh timer thread runs on; -1 means core 2 (the game is on core 1)." },
+	{ "debug.wiiu_draw_nothing", _config_boolean, "false", "HALO_WIIU_DRAW_NOTHING", _environment_set_is_true, _platform_all,
+		"Wii U: the game's own draws are skipped (screen clears and copies still happen), to tell whether a draw stops the GPU." },
 	{ "debug.gpu_uniform_blocks", _config_boolean, "false", "HALO_GPU_UNIFORM_BLOCKS", _environment_set_is_true, _platform_all,
 		"Wii U: the game's shaders read their uniforms from uniform blocks instead of registers." },
 	{ "debug.gpu_uniform_blocks_unswapped", _config_boolean, "false", "HALO_GPU_UNIFORM_BLOCKS_UNSWAPPED", _environment_set_is_true, _platform_all,

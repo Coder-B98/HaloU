@@ -13,9 +13,16 @@ Once a second, sd:/halou/sanity.txt gets a line: frames drawn, frames
 sent and shown, the GPU's submitted and done timestamps, and where the
 sound hardware is playing in its buffer (it moves if the sound runs).
 HOME, then Close, ends it.
+
+Built with -DSANITY_ON_THREAD (halou_sanity_thread.wuhb), the graphics
+and the tone start and run on a second thread made as the game makes its
+own (8 MB of stack, kept on CPU 1), while the main thread only answers
+the system's messages, as in the game: if this one stays dark and silent
+where the plain one works, the thread is the fault.
 */
 
 #include <coreinit/cache.h>
+#include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <gx2/event.h>
 #include <gx2/swap.h>
@@ -27,6 +34,7 @@ HOME, then Close, ends it.
 
 #include <malloc.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -99,30 +107,41 @@ static AXVoice *tone_start(int16_t *samples)
 	return voice;
 }
 
-int main(int argc, char **argv)
+static volatile int running = 1;
+static void *test_body(void *unused);
+
+#ifdef SANITY_ON_THREAD
+/* as the game's thread: kept on CPU 1 (wiiu_main.c) */
+static void *test_thread(void *unused)
+{
+	OSSetThreadAffinity(OSGetCurrentThread(), OS_THREAD_ATTRIB_AFFINITY_CPU1);
+	OSYieldThread();
+	return test_body(unused);
+}
+#endif
+
+static void *test_body(void *unused)
 {
 	static const float colours[4][3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { 1, 1, 1 } };
 	int16_t *samples;
 	AXVoice *voice;
 	unsigned long frames = 0, second = 0;
 
-	(void)argc;
-	(void)argv;
-	start_time = OSGetSystemTime();
-	WHBProcInit();
-	log_file = fopen(LOG_PATH, "a");
-	log_line("sanity test, build %s: starting", HALOU_BUILD_ID);
+	(void)unused;
 	if (!WHBGfxInit())
 	{
 		log_line("WHBGfxInit failed");
-		WHBProcShutdown();
-		return 1;
+		return NULL;
 	}
 	log_line("graphics on");
 	samples = memalign(64, TONE_FRAMES * sizeof(int16_t));
 	voice = samples ? tone_start(samples) : NULL;
 	log_line(voice ? "tone on" : "no tone (no voice or memory)");
+#ifdef SANITY_ON_THREAD
+	while (running)
+#else
 	while (WHBProcIsRunning())
+#endif
 	{
 		unsigned long now = (unsigned long)(OSTicksToMilliseconds(OSGetSystemTime() - start_time) / 1000);
 		const float *colour = colours[now % 4];
@@ -149,11 +168,44 @@ int main(int argc, char **argv)
 				voice ? (unsigned long)AXGetVoiceCurrentOffsetEx(voice, samples) : 0UL);
 		}
 	}
-	log_line("closing");
 	if (voice)
 		AXFreeVoice(voice);
 	AXQuit();
 	WHBGfxShutdown();
+	return NULL;
+}
+
+int main(int argc, char **argv)
+{
+	(void)argc;
+	(void)argv;
+	start_time = OSGetSystemTime();
+	WHBProcInit();
+	log_file = fopen(LOG_PATH, "a");
+#ifdef SANITY_ON_THREAD
+	log_line("sanity test on a second thread, build %s: starting", HALOU_BUILD_ID);
+	{
+		pthread_attr_t attributes;
+		pthread_t thread;
+
+		pthread_attr_init(&attributes);
+		pthread_attr_setstacksize(&attributes, 8 * 1024 * 1024);
+		if (pthread_create(&thread, &attributes, test_thread, NULL) != 0)
+			log_line("cannot start the test thread");
+		else
+		{
+			while (WHBProcIsRunning())
+				OSSleepTicks(OSMillisecondsToTicks(10));
+			running = 0;
+			pthread_join(thread, NULL);
+		}
+		pthread_attr_destroy(&attributes);
+	}
+#else
+	log_line("sanity test, build %s: starting", HALOU_BUILD_ID);
+	test_body(NULL);
+#endif
+	log_line("closing");
 	if (log_file)
 		fclose(log_file);
 	WHBProcShutdown();

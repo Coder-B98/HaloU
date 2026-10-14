@@ -268,6 +268,9 @@ static BOOL crashed_dsi(OSContext *context) { return crashed("memory (DSI)", con
 static BOOL crashed_isi(OSContext *context) { return crashed("code (ISI)", context); }
 static BOOL crashed_program(OSContext *context) { return crashed("program", context); }
 
+/* the game's thread has returned */
+static volatile int game_finished;
+
 static void *game_thread(void *result)
 {
 	/* GX2, the graphics, belongs to the core it was started on: the game's
@@ -277,6 +280,7 @@ static void *game_thread(void *result)
 	game_os_thread = OSGetCurrentThread();
 	OSSetThreadName(game_os_thread, "game");
 	*(int *)result = halo_xbox_main();
+	game_finished = 1;
 	return NULL;
 }
 
@@ -343,7 +347,32 @@ int main(int argc, char **argv)
 	pthread_attr_init(&attributes);
 	pthread_attr_setstacksize(&attributes, GAME_STACK_SIZE);
 	if (pthread_create(&thread, &attributes, game_thread, &result) == 0)
-		pthread_join(thread, NULL);
+	{
+		/* this thread answers the system's messages (ProcUI) while the game
+		runs: on the console the GPU is the app's only once the app has
+		taken the foreground it is given, and until then nothing sent to
+		the GPU is done and the launch splash stays up (Cemu draws
+		regardless). Run r45: not one GPU step finished in a minute. It is
+		also what makes HOME work. */
+		int first = 1;
+
+		while (!game_finished)
+		{
+			if (!WHBProcIsRunning())
+			{
+				log_line("Halo U: the system has asked the app to close\n");
+				break;
+			}
+			if (first)
+			{
+				log_line("Halo U: answering the system's messages (ProcUI) while the game runs\n");
+				first = 0;
+			}
+			OSSleepTicks(OSMillisecondsToTicks(10));
+		}
+		if (game_finished)
+			pthread_join(thread, NULL);
+	}
 	else
 		log_line("Halo U: cannot start the game's thread\n");
 	pthread_attr_destroy(&attributes);
